@@ -7,3 +7,6 @@ edition = "2021"
 
 [dependencies]
 gtk = { version = "0.5.1", package = "gtk4", features = ["v4_6"] }
+gl = "0.14"
+epoxy = "0.1.0"
+libloading="0.7.4"
