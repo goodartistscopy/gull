@@ -2,7 +2,7 @@ use gtk::prelude::*;
 use gtk::{Application, ApplicationWindow, GLArea, Inhibit};
 use gtk::gdk::GLContext;
 
-const APP_ID: &str = "org.gtk_rs.HelloWorld1";
+const APP_ID: &str = "goodartistscopy.Gull";
 
 fn main() {
     // Initialize GL function pointers
