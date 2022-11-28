@@ -14,13 +14,15 @@ const APP_ID: &str = "goodartistscopy.Gull";
 
 //#[derive(Copy,Clone,Default)]
 #[derive(Default)]
-struct DrawData{
+struct DrawData {
     context: Option<gdk::GLContext>,
     vao: u32,
     buffers: [u32; 3],
     program: u32,
     color: [f32; 4],
-    xform: [f32; 6]
+    xform: [f32; 6],
+    timer_query: u32,
+    fps_label: Option<gtk::Label>
 }
 
 fn main() {
@@ -58,7 +60,19 @@ fn build_ui(app: &gtk::Application) {
         .height_request(400)
         .build();
 
+    let fps_label = gtk::Label::builder()
+        .halign(gtk::Align::Start)
+        .valign(gtk::Align::Start)
+        .margin_top(5)
+        .margin_start(5)
+        .opacity(0.5)
+        .visible(true)
+        .label("fps")
+        .build();
+
     let data = Rc::new(RefCell::new(DrawData::default()));
+
+    data.borrow_mut().fps_label = Some(fps_label.clone());
 
     gl_canvas.connect_create_context(clone!(@strong data =>
         move |canvas| {
@@ -137,7 +151,13 @@ fn build_ui(app: &gtk::Application) {
         .orientation(gtk::Orientation::Vertical)
         .build();
 
-    container.append(&gl_canvas);
+    let overlay = gtk::Overlay::new();
+
+    overlay.set_child(Some(&gl_canvas));
+
+    overlay.add_overlay(&fps_label);
+
+    container.append(&overlay);
     container.append(&rotation_slider);
 
     window.set_child(Some(&container));
@@ -249,11 +269,19 @@ fn initialize(data: &mut DrawData) {
             let log = std::str::from_utf8_unchecked(std::slice::from_raw_parts(log.as_ptr(), log_len as usize));
             println!("Link log:\n{}\n---", log);
         }
+
+        gl::GenQueries(1, &mut data.timer_query);
+        let mut size: i32 = 0;
+        gl::GetQueryiv(gl::TIME_ELAPSED, gl::QUERY_COUNTER_BITS, &mut size);
+
+        println!("Timer query precision: {} bits", size);
     }
 }
 
 fn render(data: &DrawData) {
     unsafe {
+        gl::BeginQuery(gl::TIME_ELAPSED, data.timer_query);
+
         let color = data.color;
         gl::ClearColor(color[0], color[1], color[2], color[3]);
         gl::Clear(gl::COLOR_BUFFER_BIT);
@@ -261,5 +289,20 @@ fn render(data: &DrawData) {
         gl::BindVertexArray(data.vao);
         
         gl::DrawElements(gl::TRIANGLES, 3, gl::UNSIGNED_INT, std::ptr::null());
+
+        gl::EndQuery(gl::TIME_ELAPSED);
+
+        let mut elapsed: u64 = 0;
+        gl::GetQueryObjectui64v(data.timer_query, gl::QUERY_RESULT, &mut elapsed);
+
+        glib::idle_add_local_once(glib::clone!(@strong data.fps_label as fps_label =>
+            move  || {
+                let last_ms = ((elapsed as f64) * 1e-6) as f32;
+                let last_fps = (last_ms * 1e-3).recip();
+                if fps_label.as_ref().unwrap().is_realized()
+                {
+                    fps_label.as_ref().unwrap().set_label(std::format!("{} ms, {} fps", last_ms, last_fps).as_str());
+                }
+        }));
     }
 }
