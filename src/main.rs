@@ -5,7 +5,12 @@ use std::{
     rc::Rc,
 };
 
-use gtk::{gdk, glib, prelude::*};
+use gtk::{
+    gdk,
+    glib,
+    prelude::*,
+    pango
+};
 use gtk::glib::clone;
 
 use gl::types::*;
@@ -69,6 +74,10 @@ fn build_ui(app: &gtk::Application) {
         .visible(true)
         .label("fps")
         .build();
+
+    let label_attrs = pango::AttrList::new();
+    label_attrs.insert(pango::AttrColor::new_foreground(0, 0, 0));
+    fps_label.set_attributes(Some(&label_attrs));
 
     let data = Rc::new(RefCell::new(DrawData::default()));
 
