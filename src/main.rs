@@ -65,7 +65,7 @@ fn build_ui(app: &gtk::Application) {
         .valign(gtk::Align::Start)
         .margin_top(5)
         .margin_start(5)
-        .opacity(0.5)
+        .opacity(1.0)
         .visible(true)
         .label("fps")
         .build();
@@ -193,37 +193,44 @@ const FRAGMENT_SHADER: &str = r#"
 "#;
 
 fn initialize(data: &mut DrawData) {
-    data.color = [0.3, 0.1, 0.5, 1.0];
+    data.color = [0.9, 0.9, 0.9, 1.0];
 
     #[repr(C)]
     struct VertexData {
         pos: [f32; 2],
         color: [u8; 3]
     }
+
     let vertex_data : [VertexData; 3] = [
         VertexData { pos: [0.0, 0.0], color: [255, 0, 0] },
         VertexData { pos: [1.0, 0.0], color: [0, 255, 0] },
         VertexData { pos: [0.5, 3.0_f32.sqrt()/2.0], color: [0, 0, 255] },
     ];
+
     let indices = [0, 1, 2];
+
     unsafe {
-        gl::CreateVertexArrays(1, &mut data.vao as *mut GLuint);
-        gl::BindVertexArray(data.vao);
-
-        gl::GenBuffers(3, data.buffers.as_mut_ptr());
-
+        gl::GenBuffers(2, data.buffers.as_mut_ptr());
         gl::BindBuffer(gl::ARRAY_BUFFER, data.buffers[0]);
         let vbuffer_size = std::mem::size_of_val(&vertex_data) as isize;
         gl::BufferStorage(gl::ARRAY_BUFFER, vbuffer_size, vertex_data.as_ptr().cast(), 0);
-
+        
+        gl::CreateVertexArrays(1, &mut data.vao as *mut GLuint);
+        gl::BindVertexArray(data.vao);
         gl::EnableVertexAttribArray(0);
         gl::EnableVertexAttribArray(1);
-        gl::VertexAttribPointer(0, 2, gl::FLOAT, false as GLboolean, std::mem::size_of::<VertexData>() as i32, std::ptr::null());
-        gl::VertexAttribPointer(1, 3, gl::UNSIGNED_BYTE, true as GLboolean, std::mem::size_of::<VertexData>() as i32, std::mem::size_of::<[f32; 2]>() as *const GLvoid);
-    
-        gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, data.buffers[2]);
+
+        gl::VertexAttribBinding(0, 0);
+        gl::VertexAttribFormat(0, 2, gl::FLOAT, false as GLboolean, 0);
+        gl::BindVertexBuffer(0, data.buffers[0], 0, std::mem::size_of::<VertexData>() as i32);
+
+        gl::VertexAttribBinding(1, 1);
+        gl::VertexAttribFormat(1, 3, gl::UNSIGNED_BYTE, true as GLboolean, std::mem::size_of::<[f32; 2]>() as u32);
+        gl::BindVertexBuffer(1, data.buffers[0], 0, std::mem::size_of::<VertexData>() as i32);
+
+        gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, data.buffers[1]);
         gl::BufferStorage(gl::ELEMENT_ARRAY_BUFFER, std::mem::size_of_val(&indices) as isize, indices.as_ptr().cast(), 0);
-    
+
         let vs = gl::CreateShader(gl::VERTEX_SHADER);
         gl::ShaderSource(vs, 1, &VERTEX_SHADER.as_ptr().cast() , &(VERTEX_SHADER.len().try_into().unwrap()));
         gl::CompileShader(vs);
