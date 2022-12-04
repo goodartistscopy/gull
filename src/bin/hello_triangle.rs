@@ -11,9 +11,12 @@ use gtk::{
     prelude::*,
     pango
 };
+
 use gtk::glib::clone;
 
 use gl::types::*;
+
+use gull::utils::*;
 
 const APP_ID: &str = "goodartistscopy.Gull";
 
@@ -92,7 +95,7 @@ fn build_ui(app: &gtk::Application) {
 
             context.set_required_version(4, 6);
             context.set_forward_compatible(true);
-            context.set_debug_enabled(true);
+            context.set_debug_enabled(std::cfg!(debug_assertions));
 
             if let Err(error) = context.realize()
             {
@@ -109,6 +112,12 @@ fn build_ui(app: &gtk::Application) {
 
             data.borrow_mut().context = Some(context.clone());
 
+            #[cfg(debug_assertions)]
+            unsafe{
+                gl::Enable(gl::DEBUG_OUTPUT);
+                gl::DebugMessageCallback(Some(debug_callback), std::ptr::null());
+            }
+            
             Some(context)
     }));
 
@@ -224,7 +233,7 @@ fn initialize(data: &mut DrawData) {
         let vbuffer_size = std::mem::size_of_val(&vertex_data) as isize;
         gl::BufferStorage(gl::ARRAY_BUFFER, vbuffer_size, vertex_data.as_ptr().cast(), 0);
         
-        gl::CreateVertexArrays(1, &mut data.vao as *mut GLuint);
+        gl::CreateVertexArrays(1, &mut data.vao);
         gl::BindVertexArray(data.vao);
         gl::EnableVertexAttribArray(0);
         gl::EnableVertexAttribArray(1);
