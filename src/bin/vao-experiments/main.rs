@@ -52,9 +52,8 @@ struct AppData {
     fps_label: Option<gtk::Label>,
     objects: Vec::<ObjectData>,
     object_xforms_buffer: u32,
-    orig_view_point: (f32, f32), // theta, phi
-    current_view_point: (f32, f32), // theta, phi
-    view_point_distance: f32,
+    orig_view_point: (f32, f32, f32), // theta, phi, distance
+    current_view_point: (f32, f32, f32), // theta, phi, distance
     view_matrices: [Matrix4; 2],
     view_data_buffer: u32,
 }
@@ -78,6 +77,20 @@ fn main() {
     let app = gtk::Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
     app.run();
+}
+
+fn update_view_matrix(data: &mut AppData)
+{
+    let theta = data.current_view_point.0;
+    let phi = data.current_view_point.1;
+    let (stheta, ctheta) = theta.sin_cos();
+    let (sphi, cphi) = phi.sin_cos();
+    let p = data.current_view_point.2 * Point3::new(stheta * cphi, stheta * sphi, ctheta);
+    data.view_matrices[0] = Matrix4::look_at_rh(&p, &Point3::origin(), &Vector3::z_axis());
+
+    unsafe {
+        gl::NamedBufferSubData(data.view_data_buffer, 0, size_of::<Matrix4>() as isize, data.view_matrices[0].data.ptr().cast());
+    }
 }
 
 fn build_ui(app: &gtk::Application) {
@@ -161,37 +174,40 @@ fn build_ui(app: &gtk::Application) {
     }));
 
     let mouse_ctrl = gtk::GestureDrag::new();
-    
     mouse_ctrl.connect_drag_begin(clone!(@strong data =>
         move |_canvas, _x, _y| {
             let mut data = data.borrow_mut();
             data.orig_view_point = data.current_view_point;
     }));
-
     mouse_ctrl.connect_drag_update(clone!(@strong data, @strong gl_canvas =>
         move |ctrl, _x, _y| {
             let mut data = data.borrow_mut();
             if let Some((dx,dy)) = ctrl.offset() {
                 data.current_view_point = (
                     (data.orig_view_point.0 + -0.01 * dy as f32).clamp(0.01, PI-0.01),
-                    (data.orig_view_point.1 + -0.01 * dx as f32).rem_euclid(2.0 * PI)
+                    (data.orig_view_point.1 + -0.01 * dx as f32).rem_euclid(2.0 * PI),
+                    data.orig_view_point.2
                 );
-                let theta = data.current_view_point.0;
-                let phi = data.current_view_point.1;
-                let (ctheta, stheta) = (theta.cos(), theta.sin());
-                let (cphi, sphi) = (phi.cos(), phi.sin());
-                let p = data.view_point_distance * Point3::new(stheta * cphi, stheta * sphi, ctheta);
-                data.view_matrices[0] = Matrix4::look_at_rh(&p, &Point3::origin(), &Vector3::z_axis());
-
-                unsafe {
-                    gl::NamedBufferSubData(data.view_data_buffer, 0, size_of::<Matrix4>() as isize, data.view_matrices[0].data.ptr().cast());
-                }
+                update_view_matrix(&mut data);
 
                 gl_canvas.queue_render();
             }
     }));
-
     gl_canvas.add_controller(&mouse_ctrl);
+
+    let scroll_ctrl = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    scroll_ctrl.connect_scroll(clone!(@strong data, @strong gl_canvas =>
+        move |_canvas, _, dy| {
+            let mut data = data.borrow_mut();
+            data.current_view_point.2 += 0.6 * (dy as f32);
+
+            update_view_matrix(&mut data);
+
+            gl_canvas.queue_render();
+
+            gtk::Inhibit(true)
+    }));
+    gl_canvas.add_controller(&scroll_ctrl);
 
     let container = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -334,12 +350,12 @@ fn initialize(data: &mut AppData) {
 
         let vs_inputs = data.program.get_vertex_shader_inputs();
     
-        update_object_grid(data, &sphere, &vs_inputs, (5, 5, 5));
+        let grid_size = (5, 5, 5);
+        update_object_grid(data, &sphere, &vs_inputs, grid_size);
 
         gl::CreateBuffers(1, &mut data.view_data_buffer as *mut _);
-        data.view_point_distance = 25.0;
-        data.current_view_point = (PI/2.0, 0.0);
-        data.view_matrices[0] = Matrix4::look_at_rh(&Point3::new(data.view_point_distance, 0.0, 0.0), &Point3::origin(), &Vector3::z_axis());
+        data.current_view_point = (PI/2.0, 0.0, 4.0 * grid_size.0.max(grid_size.1).max(grid_size.2) as f32);
+        data.view_matrices[0] = Matrix4::look_at_rh(&Point3::new(data.current_view_point.2, 0.0, 0.0), &Point3::origin(), &Vector3::z_axis());
         data.view_matrices[1] = Matrix4::new_perspective(1.0, 45.0_f32.to_radians(), 0.1, 1e3);
         gl::NamedBufferStorage(data.view_data_buffer, 2 * size_of::<Matrix4>() as isize, data.view_matrices.as_ptr().cast(), gl::DYNAMIC_STORAGE_BIT);
 
