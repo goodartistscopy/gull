@@ -304,13 +304,9 @@ fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexS
                             VertexLayout {
                                 attributes: vec![
                                     Attribute {semantic: AttributeSemantic::Position, base_type: AttributeType::Float32, len: 3, normalized: false },
-                                ]
-                            },
-                            VertexLayout {
-                                attributes: vec![
                                     Attribute {semantic: AttributeSemantic::Normal, base_type: AttributeType::Float32, len: 3, normalized: false },
                                 ]
-                            }
+                            },
                         ];
                         let draw_data = DrawData::with_mesh(stream_layouts, mesh);
                         let inputs = InputAssembly::new();
