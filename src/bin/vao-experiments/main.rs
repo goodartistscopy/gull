@@ -340,6 +340,12 @@ fn initialize(data: &mut AppData) {
         println!("Uniform buffer alignment: {}", data.uniform_buffer_alignment);
 
         data.color = [0.85, 0.85, 0.85, 1.0];
+        gl::ClearColor(data.color[0], data.color[1], data.color[2], data.color[3]);
+        gl::ClearDepthf(1.0);
+        gl::Enable(gl::CULL_FACE);
+        gl::Enable(gl::DEPTH_TEST);
+        gl::DepthFunc(gl::LESS);
+
         let sphere = create_icosphere(0.8, 1);
 
         data.program = ShaderProgram::new(VERTEX_SHADER, FRAGMENT_SHADER);
@@ -369,16 +375,9 @@ fn render(data: &AppData) {
     unsafe {
         gl::BeginQuery(gl::TIME_ELAPSED, data.timer_query);
 
-        let color = data.color;
-        gl::ClearColor(color[0], color[1], color[2], color[3]);
-        gl::ClearDepthf(1.0);
         gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
       
         data.program.activate();
-
-        gl::Enable(gl::CULL_FACE);
-        gl::Enable(gl::DEPTH_TEST);
-        gl::DepthFunc(gl::LESS);
 
         gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, data.view_data_buffer);
         for object in &data.objects {
