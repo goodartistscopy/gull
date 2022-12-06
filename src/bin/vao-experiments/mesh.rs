@@ -36,8 +36,7 @@ pub fn create_icosphere(radius: f32, num_subdivisions: u8) -> Mesh
     // 2 middle layers 
     for i in 0..2 {
         let theta = (i + 1) as f32 * LAT_ANGLE;
-        let ctheta = theta.cos();
-        let stheta = theta.sin();
+        let (stheta, ctheta) = theta.sin_cos();
         for j in 0..=5 {
             let phi = (j as f32) * LONG_ANGLE + i as f32 * LONG_ANGLE / 2.0;
             let normal = vector![stheta * phi.cos(), stheta * phi.sin(), ctheta];
