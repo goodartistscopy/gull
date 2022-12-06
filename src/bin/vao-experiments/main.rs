@@ -44,6 +44,7 @@ struct ObjectData {
 #[derive(Default)]
 struct AppData {
     context: Option<gdk::GLContext>,
+    uniform_buffer_alignment: i32,
     global_input_assembly: InputAssembly,
     program: ShaderProgram,
     color: [f32; 4],
@@ -262,15 +263,18 @@ const FRAGMENT_SHADER: &str = r#"
 fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexShaderInput>, grid_dim: (u32, u32, u32)) {
     unsafe {
         let num_objects = (grid_dim.0 * grid_dim.1 * grid_dim.2) as usize;
+        let per_object_size = ((size_of::<Matrix4>() as i32 / data.uniform_buffer_alignment) + 1) * data.uniform_buffer_alignment; 
         if num_objects > data.objects.len() {
             let mut buffer = data.object_xforms_buffer;
             if gl::IsBuffer(buffer) == gl::TRUE {
                gl::DeleteBuffers(1, &buffer as *const _);
             }
             gl::CreateBuffers(1, &mut buffer as *mut _);
-            gl::NamedBufferStorage(buffer, (num_objects * size_of::<Matrix4>()) as isize, std::ptr::null(), gl::DYNAMIC_STORAGE_BIT);
+            // Note: this might cause significant over-allocation (e.g. on an RTX 3080, alignment is 256)
+            gl::NamedBufferStorage(buffer, (num_objects as i32 * per_object_size) as isize, std::ptr::null(), gl::DYNAMIC_STORAGE_BIT);
             data.object_xforms_buffer = buffer;
         }
+
         const GRID_SPACING : f32 = 2.0;
         let back = -((grid_dim.0 - 1) as f32 * GRID_SPACING / 2.0);
         let left = -((grid_dim.1 - 1) as f32 * GRID_SPACING / 2.0);
@@ -299,7 +303,7 @@ fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexS
                         let t = Vector3::new(back, left, bottom) + GRID_SPACING * Vector3::new(i as f32, j as f32, k as f32);
                         let mat = Matrix4::new_translation(&t);
 
-                        let offset = (linear_idx as usize * size_of::<Matrix4>()) as isize;
+                        let offset = (linear_idx as i32 * per_object_size) as isize;
                         gl::NamedBufferSubData(data.object_xforms_buffer, offset, size_of::<Matrix4>() as isize, mat.data.ptr().cast());
                         let xform_buffer = BufferView {
                             buffer_id: data.object_xforms_buffer,
@@ -314,11 +318,18 @@ fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexS
 }
 
 fn initialize(data: &mut AppData) {
-    data.color = [0.9, 0.8, 0.85, 1.0];
-    
-    let sphere = create_icosphere(0.8, 2);
-
     unsafe {
+        gl::GenQueries(1, &mut data.timer_query);
+        let mut size: i32 = 0;
+        gl::GetQueryiv(gl::TIME_ELAPSED, gl::QUERY_COUNTER_BITS, &mut size);
+        println!("Timer query precision: {} bits", size);
+
+        gl::GetIntegerv(gl::UNIFORM_BUFFER_OFFSET_ALIGNMENT, &mut data.uniform_buffer_alignment as *mut _);
+        println!("Uniform buffer alignment: {}", data.uniform_buffer_alignment);
+
+        data.color = [0.85, 0.85, 0.85, 1.0];
+        let sphere = create_icosphere(0.8, 1);
+
         data.program = ShaderProgram::new(VERTEX_SHADER, FRAGMENT_SHADER);
 
         let vs_inputs = data.program.get_vertex_shader_inputs();
@@ -339,11 +350,6 @@ fn initialize(data: &mut AppData) {
         println!("Bindex block index {} to binding 1", index);
         gl::UniformBlockBinding(data.program.id, index, 1);
 
-        gl::GenQueries(1, &mut data.timer_query);
-        let mut size: i32 = 0;
-        gl::GetQueryiv(gl::TIME_ELAPSED, gl::QUERY_COUNTER_BITS, &mut size);
-
-        println!("Timer query precision: {} bits", size);
     }
 }
 
