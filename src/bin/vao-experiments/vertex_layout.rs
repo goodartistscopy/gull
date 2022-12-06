@@ -134,7 +134,6 @@ impl VertexLayout {
     }
 }
 
-
 pub struct DrawData {
     pub vertex_buffers: Vec<BufferView>,
     pub layouts: Vec<VertexLayout>, // FIXME not the right place or just reference ?

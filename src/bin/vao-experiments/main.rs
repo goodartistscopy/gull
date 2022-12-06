@@ -25,8 +25,6 @@ use na::{
 type Matrix4 = na::Matrix4::<f32>;
 use std::f32::consts::PI;
 
-use gl::types::*;
-
 use mesh::*;
 use shader::*;
 use vertex_layout::*;
@@ -52,6 +50,7 @@ struct AppData {
     timer_query: u32,
     fps_label: Option<gtk::Label>,
     objects: Vec::<ObjectData>,
+    object_xforms_buffer: u32,
     orig_view_point: (f32, f32), // theta, phi
     current_view_point: (f32, f32), // theta, phi
     view_point_distance: f32,
@@ -255,14 +254,64 @@ const FRAGMENT_SHADER: &str = r#"
 
     void main() {
         vec3 l = normalize(LIGHT - worldPosition);
-        float lambert = clamp(dot(l, worldNormal), 0.0, 1.0);
+        float lambert = clamp(dot(l, normalize(worldNormal)), 0.0, 1.0);
         color = vec4(vec3(lambert), 1.0);
     }
 "#;
 
-// fn update_object_grid() {
+fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexShaderInput>, grid_dim: (u32, u32, u32)) {
+    unsafe {
+        let num_objects = (grid_dim.0 * grid_dim.1 * grid_dim.2) as usize;
+        if num_objects > data.objects.len() {
+            let mut buffer = data.object_xforms_buffer;
+            if gl::IsBuffer(buffer) == gl::TRUE {
+               gl::DeleteBuffers(1, &buffer as *const _);
+            }
+            gl::CreateBuffers(1, &mut buffer as *mut _);
+            gl::NamedBufferStorage(buffer, (num_objects * size_of::<Matrix4>()) as isize, std::ptr::null(), gl::DYNAMIC_STORAGE_BIT);
+            data.object_xforms_buffer = buffer;
+        }
+        const GRID_SPACING : f32 = 2.0;
+        let back = -((grid_dim.0 - 1) as f32 * GRID_SPACING / 2.0);
+        let left = -((grid_dim.1 - 1) as f32 * GRID_SPACING / 2.0);
+        let bottom = -((grid_dim.2 - 1) as f32 * GRID_SPACING / 2.0);
+        for i in 0..grid_dim.0 {
+            for j in 0..grid_dim.1 {
+                for k in 0..grid_dim.2 {
+                    let linear_idx = (i * (grid_dim.0 * grid_dim.1) + j * grid_dim.0 + k) as usize;
+                    if linear_idx >= data.objects.len() {
+                        let stream_layouts = vec![
+                            VertexLayout {
+                                attributes: vec![
+                                    Attribute {semantic: AttributeSemantic::Position, base_type: AttributeType::Float32, len: 3, normalized: false },
+                                ]
+                            },
+                            VertexLayout {
+                                attributes: vec![
+                                    Attribute {semantic: AttributeSemantic::Normal, base_type: AttributeType::Float32, len: 3, normalized: false },
+                                ]
+                            }
+                        ];
+                        let draw_data = DrawData::with_mesh(stream_layouts, mesh);
+                        let inputs = InputAssembly::new();
+                        inputs.configure_and_bind(vs_inputs, &draw_data);
 
-// }
+                        let t = Vector3::new(back, left, bottom) + GRID_SPACING * Vector3::new(i as f32, j as f32, k as f32);
+                        let mat = Matrix4::new_translation(&t);
+
+                        let offset = (linear_idx as usize * size_of::<Matrix4>()) as isize;
+                        gl::NamedBufferSubData(data.object_xforms_buffer, offset, size_of::<Matrix4>() as isize, mat.data.ptr().cast());
+                        let xform_buffer = BufferView {
+                            buffer_id: data.object_xforms_buffer,
+                            offset: offset as u32
+                        };
+                        data.objects.push(ObjectData { draw_data, xform: mat, xform_buffer, inputs });
+                    }
+                }
+            }
+        }
+    }
+}
 
 fn initialize(data: &mut AppData) {
     data.color = [0.9, 0.8, 0.85, 1.0];
@@ -270,48 +319,14 @@ fn initialize(data: &mut AppData) {
     let sphere = create_icosphere(0.8, 2);
 
     unsafe {
-        let stream_layouts = vec![
-            VertexLayout {
-                attributes: vec![
-                    Attribute {semantic: AttributeSemantic::Padding, base_type: AttributeType::UInt8, len: 1, normalized: false },
-                    Attribute {semantic: AttributeSemantic::Position, base_type: AttributeType::Float32, len: 3, normalized: false },
-                ]
-            },
-            VertexLayout {
-                attributes: vec![
-                   Attribute {semantic: AttributeSemantic::Padding, base_type: AttributeType::UInt8, len: 2, normalized: false },
-                   Attribute {semantic: AttributeSemantic::Normal, base_type: AttributeType::Float32, len: 3, normalized: false },
-                ]
-            }
-        ];
-
         data.program = ShaderProgram::new(VERTEX_SHADER, FRAGMENT_SHADER);
 
         let vs_inputs = data.program.get_vertex_shader_inputs();
     
-        // first object
-        let draw_data = DrawData::with_mesh(stream_layouts.clone(), &sphere);
-        let inputs = InputAssembly::new();
-        inputs.configure_and_bind(&vs_inputs, &draw_data);
-
-        let mut matrices_buffer = 0;
-        gl::CreateBuffers(1, &mut matrices_buffer as *mut _);
-        let mat = Matrix4::new_translation(&Vector3::new(-1.0, 0.0, 0.0));
-        gl::NamedBufferStorage(matrices_buffer, size_of::<Matrix4>() as isize, mat.data.ptr().cast(), gl::DYNAMIC_STORAGE_BIT);
-        data.objects.push(ObjectData { draw_data, xform: Matrix4::identity(), xform_buffer: BufferView { buffer_id: matrices_buffer, offset: 0}, inputs });
-
-        // another object
-        let draw_data = DrawData::with_mesh(stream_layouts, &sphere);
-        let inputs = InputAssembly::new();
-        inputs.configure_and_bind(&vs_inputs, &draw_data);
-        let mut matrices_buffer = 0;
-        gl::CreateBuffers(1, &mut matrices_buffer as *mut _);
-        let mat = Matrix4::new_translation(&Vector3::new(1.0, 0.0, 0.0));
-        gl::NamedBufferStorage(matrices_buffer, size_of::<Matrix4>() as isize, mat.data.ptr().cast(), gl::DYNAMIC_STORAGE_BIT);
-        data.objects.push(ObjectData { draw_data, xform: Matrix4::identity(), xform_buffer: BufferView { buffer_id: matrices_buffer, offset: 0}, inputs });
+        update_object_grid(data, &sphere, &vs_inputs, (5, 5, 5));
 
         gl::CreateBuffers(1, &mut data.view_data_buffer as *mut _);
-        data.view_point_distance = 5.0;
+        data.view_point_distance = 25.0;
         data.current_view_point = (PI/2.0, 0.0);
         data.view_matrices[0] = Matrix4::look_at_rh(&Point3::new(data.view_point_distance, 0.0, 0.0), &Point3::origin(), &Vector3::z_axis());
         data.view_matrices[1] = Matrix4::new_perspective(1.0, 45.0_f32.to_radians(), 0.1, 1e3);
