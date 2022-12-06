@@ -295,9 +295,9 @@ fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexS
         let back = -((grid_dim.0 - 1) as f32 * GRID_SPACING / 2.0);
         let left = -((grid_dim.1 - 1) as f32 * GRID_SPACING / 2.0);
         let bottom = -((grid_dim.2 - 1) as f32 * GRID_SPACING / 2.0);
-        for i in 0..grid_dim.0 {
+        for i in 0..grid_dim.2 {
             for j in 0..grid_dim.1 {
-                for k in 0..grid_dim.2 {
+                for k in 0..grid_dim.0 {
                     let linear_idx = (i * (grid_dim.0 * grid_dim.1) + j * grid_dim.0 + k) as usize;
                     if linear_idx >= data.objects.len() {
                         let stream_layouts = vec![
@@ -316,7 +316,7 @@ fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexS
                         let inputs = InputAssembly::new();
                         inputs.configure_and_bind(vs_inputs, &draw_data);
 
-                        let t = Vector3::new(back, left, bottom) + GRID_SPACING * Vector3::new(i as f32, j as f32, k as f32);
+                        let t = Vector3::new(back, left, bottom) + GRID_SPACING * Vector3::new(k as f32, j as f32, i as f32);
                         let mat = Matrix4::new_translation(&t);
 
                         let offset = (linear_idx as i32 * per_object_size) as isize;
