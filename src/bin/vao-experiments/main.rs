@@ -33,6 +33,39 @@ use gull::utils::*;
 
 const APP_ID: &str = "vao-experiments.Gull";
 
+const UI: &str = r##"
+<interface>
+    <object class="GtkApplicationWindow" id="main_window">
+        <property name="title">VAO Experiments</property>
+        <child>
+            <object class="GtkOverlay">
+                <child>
+                    <object class="GtkGLArea" id="canvas">
+                        <property name="width-request">512</property>
+                        <property name="height-request">512</property>
+                        <property name="valign">GTK_ALIGN_FILL</property>
+                        <property name="vexpand">TRUE</property>
+                        <property name="auto-render">TRUE</property>
+                        <property name="has-depth-buffer">TRUE</property>
+                    </object>
+                </child>child
+                <child type="overlay">
+                    <object class="GtkLabel" id="fps_label">
+                        <property name="halign">GTK_ALIGN_START</property>
+                        <property name="valign">GTK_ALIGN_START</property>
+                        <property name="margin-top">5</property>
+                        <property name="margin-start">5</property>
+                        <attributes>
+                            <attribute name="foreground" value="#000000"/>
+                        </attributes>
+                    </object>
+                </child>
+            </object>
+        </child>
+    </object>
+</interface>
+"##;
+
 struct ObjectData {
     draw_data: DrawData,
     xform: Matrix4,
@@ -94,33 +127,11 @@ fn update_view_matrix(data: &mut AppData)
 }
 
 fn build_ui(app: &gtk::Application) {
-    let window = gtk::ApplicationWindow::builder()
-        .application(app)
-        .title("Gull")
-        .build();
-
-    let gl_canvas = gtk::GLArea::builder()
-        .has_depth_buffer(true)
-        .auto_render(true)
-        .valign(gtk::Align::Fill)
-        .vexpand(true)
-        .width_request(400)
-        .height_request(400)
-        .build();
-
-    let fps_label = gtk::Label::builder()
-        .halign(gtk::Align::Start)
-        .valign(gtk::Align::Start)
-        .margin_top(5)
-        .margin_start(5)
-        .opacity(1.0)
-        .visible(true)
-        .label("fps")
-        .build();
-
-    let label_attrs = pango::AttrList::new();
-    label_attrs.insert(pango::AttrColor::new_foreground(0, 0, 0));
-    fps_label.set_attributes(Some(&label_attrs));
+    let builder = gtk::Builder::from_string(UI);
+    let gl_canvas: gtk::GLArea = builder.object("canvas").unwrap();
+    let fps_label: gtk::Label = builder.object("fps_label").unwrap();
+    let window: gtk::ApplicationWindow = builder.object("main_window").unwrap();
+    window.set_application(Some(app));
 
     let data = Rc::new(RefCell::new(AppData::default()));
 
@@ -209,19 +220,6 @@ fn build_ui(app: &gtk::Application) {
     }));
     gl_canvas.add_controller(&scroll_ctrl);
 
-    let container = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .build();
-
-    let overlay = gtk::Overlay::new();
-
-    overlay.set_child(Some(&gl_canvas));
-
-    overlay.add_overlay(&fps_label);
-
-    container.append(&overlay);
-
-    window.set_child(Some(&container));
     window.present();
 }
 
