@@ -82,7 +82,8 @@ struct AppData {
     program: ShaderProgram,
     color: [f32; 4],
     timer_query: u32,
-    fps_label: Option<gtk::Label>,
+    frame_time_history: VecDeque::<f32>,
+    fps_label: gtk::Label,
     objects: Vec::<ObjectData>,
     object_xforms_buffer: u32,
     orig_view_point: (f32, f32, f32), // theta, phi, distance
@@ -135,7 +136,7 @@ fn build_ui(app: &gtk::Application) {
 
     let data = Rc::new(RefCell::new(AppData::default()));
 
-    data.borrow_mut().fps_label = Some(fps_label.clone());
+    data.borrow_mut().fps_label = fps_label;
 
     gl_canvas.connect_create_context(clone!(@strong data =>
         move |canvas| {
@@ -179,7 +180,7 @@ fn build_ui(app: &gtk::Application) {
 
     gl_canvas.connect_render(clone!(@strong data =>
         move |_canvas: &gtk::GLArea, _context: &gdk::GLContext| {
-            render(&data.borrow());
+            render(data.clone());
 
             gtk::Inhibit(true)
     }));
@@ -369,8 +370,10 @@ fn initialize(data: &mut AppData) {
     }
 }
 
-fn render(data: &AppData) {
+fn render(data_rc: Rc::<RefCell::<AppData>>) {
     unsafe {
+        let data = data_rc.borrow();
+
         gl::BeginQuery(gl::TIME_ELAPSED, data.timer_query);
 
         gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
@@ -390,14 +393,22 @@ fn render(data: &AppData) {
         let mut elapsed: u64 = 0;
         gl::GetQueryObjectui64v(data.timer_query, gl::QUERY_RESULT, &mut elapsed);
 
-        glib::idle_add_local_once(glib::clone!(@strong data.fps_label as fps_label =>
+        glib::idle_add_local_once(glib::clone!(@strong data_rc =>
             move  || {
-                let last_ms = ((elapsed as f64) * 1e-6) as f32;
-                let last_fps = (last_ms * 1e-3).recip();
-                if fps_label.as_ref().unwrap().is_realized()
-                {
-                    fps_label.as_ref().unwrap().set_label(std::format!("{} ms, {} fps", last_ms, last_fps).as_str());
+                let mut data = data_rc.borrow_mut();
+                if !data.fps_label.is_realized() {
+                    return;
                 }
+                
+                let last_ms = ((elapsed as f64) * 1e-6) as f32;
+                let history = &mut data.frame_time_history;
+                history.push_front(last_ms);
+                if history.len() > 30 {
+                    history.pop_back();
+                }
+                let mean_ms = history.iter().fold(0.0, |s, x| { s + x }) / history.len() as f32;
+                let mean_fps = (mean_ms * 1e-3).recip();
+                data.fps_label.set_label(std::format!("{:.3} ms, {:.0} fps", mean_ms, mean_fps).as_str());
         }));
     }
 }
