@@ -6,7 +6,9 @@ use std::{
     ffi::{CStr, c_char},
     cell::RefCell,
     rc::Rc,
-    mem::size_of
+    mem::size_of,
+    f32::consts::PI,
+    collections::VecDeque,
 };
 
 use gtk::{
@@ -14,7 +16,6 @@ use gtk::{
     glib,
     glib::{clone, source::Continue},
     prelude::*,
-    pango
 };
 
 use nalgebra as na;
@@ -23,7 +24,6 @@ use na::{
     RawStorage,
 };
 type Matrix4 = na::Matrix4::<f32>;
-use std::f32::consts::PI;
 
 use mesh::*;
 use shader::*;
@@ -381,9 +381,9 @@ fn render(data_rc: Rc::<RefCell::<AppData>>) {
         data.program.activate();
 
         gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, data.view_data_buffer);
+
         for object in &data.objects {
             object.inputs.activate();
-
             gl::BindBufferRange(gl::UNIFORM_BUFFER, 1, object.xform_buffer.buffer_id, object.xform_buffer.offset as isize, size_of::<[Matrix4; 2]>() as isize);
             gl::DrawElements(gl::TRIANGLES, object.draw_data.num_elems, gl::UNSIGNED_INT, std::ptr::null());
         }
