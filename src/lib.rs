@@ -1,3 +1,7 @@
+pub mod vertex_layout;
+pub mod shader;
+pub mod mesh;
+
 pub mod utils {
     use gl::types::*;
     use colored::Colorize;
@@ -34,6 +38,10 @@ pub mod utils {
             gl::DEBUG_SEVERITY_NOTIFICATION => tag.purple(),
             _ => tag.normal()
         };
+
+        if severity == gl::DEBUG_SEVERITY_NOTIFICATION {
+            return;
+        }
 
         let message = unsafe {
             String::from_utf8_unchecked(std::slice::from_raw_parts(message as *const u8, length as usize).to_owned())

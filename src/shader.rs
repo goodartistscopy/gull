@@ -1,5 +1,9 @@
 use crate::vertex_layout::AttributeSemantic;
-use std::{slice,str};
+use std::{
+    slice,
+    str,
+    fs
+};
 
 pub struct VertexShaderInput
 {
@@ -15,54 +19,72 @@ pub struct ShaderProgram {
 }
 
 impl ShaderProgram {
-    pub unsafe fn new(vertex_source: &str, fragment_source: &str) -> Self {
-        let vs = gl::CreateShader(gl::VERTEX_SHADER);
-        gl::ShaderSource(vs, 1, &vertex_source.as_ptr().cast() , &(vertex_source.len().try_into().unwrap()));
-        gl::CompileShader(vs);
-        
-        let mut compiled = 0;
-        gl::GetShaderiv(vs, gl::COMPILE_STATUS, &mut compiled);
-        if compiled == 0 {
-            let mut log: [u8;1024] = [0; 1024];
-            let mut log_len = 0;
-            gl::GetShaderInfoLog(vs, 1024, &mut log_len, log.as_mut_ptr().cast());
+    pub fn new(vertex_source: &str, fragment_source: &str) -> Option<Self> {
+        unsafe {
+            let vs = gl::CreateShader(gl::VERTEX_SHADER);
+            gl::ShaderSource(vs, 1, &vertex_source.as_ptr().cast() , &(vertex_source.len().try_into().unwrap()));
+            gl::CompileShader(vs);
+            
+            let mut compiled = 0;
+            gl::GetShaderiv(vs, gl::COMPILE_STATUS, &mut compiled);
+            if compiled == 0 {
+                let mut log: [u8;1024] = [0; 1024];
+                let mut log_len = 0;
+                gl::GetShaderInfoLog(vs, 1024, &mut log_len, log.as_mut_ptr().cast());
 
-            let log = std::str::from_utf8_unchecked(std::slice::from_raw_parts(log.as_ptr(), log_len as usize));
-            println!("Compilation log:\n{}\n---", log);
+                let log = std::str::from_utf8_unchecked(std::slice::from_raw_parts(log.as_ptr(), log_len as usize));
+                println!("VS Compilation log:\n{}\n---", log);
+
+                return None
+            }
+
+            let fs = gl::CreateShader(gl::FRAGMENT_SHADER);
+            gl::ShaderSource(fs, 1, &fragment_source.as_ptr().cast(), &(fragment_source.len().try_into().unwrap()));
+            gl::CompileShader(fs);
+
+            gl::GetShaderiv(fs, gl::COMPILE_STATUS, &mut compiled);
+            if compiled == 0 {
+                let mut log: [u8;1024] = [0; 1024];
+                let mut log_len = 0;
+                gl::GetShaderInfoLog(fs, 1024, &mut log_len, log.as_mut_ptr().cast());
+
+                let log = str::from_utf8_unchecked(slice::from_raw_parts(log.as_ptr(), log_len as usize));
+                println!("FS Compilation log:\n{}\n---", log);
+
+                return None
+            }
+
+            let program = ShaderProgram { id: gl::CreateProgram(), inputs: Vec::new() };
+            gl::AttachShader(program.id, vs);
+            gl::AttachShader(program.id, fs);
+            gl::DeleteShader(vs);
+            gl::DeleteShader(fs);
+            gl::LinkProgram(program.id);
+            let mut linked: i32 = 0;
+            gl::GetProgramiv(program.id, gl::LINK_STATUS, &mut linked as *mut i32); 
+            if linked == 0 {
+                let mut log: [u8;1024] = [0; 1024];
+                let mut log_len: i32 = 0;
+                gl::GetProgramInfoLog(program.id, 1024, &mut log_len, log.as_mut_ptr().cast());
+
+                let log = str::from_utf8_unchecked(slice::from_raw_parts(log.as_ptr(), log_len as usize));
+                println!("Link log:\n{}\n---", log);
+
+                return None
+            }
+
+            Some(program)
+        }
+    }
+
+    pub fn from_files(vertex_shader_path: &str, fragment_shader_path: &str) -> Option<Self> {
+        if let Ok(vs_source) = fs::read_to_string(vertex_shader_path) {
+            if let Ok(fs_source) = fs::read_to_string(fragment_shader_path) {
+                return Self::new(&vs_source, &fs_source);
+            }
         }
 
-        let fs = gl::CreateShader(gl::FRAGMENT_SHADER);
-        gl::ShaderSource(fs, 1, &fragment_source.as_ptr().cast(), &(fragment_source.len().try_into().unwrap()));
-        gl::CompileShader(fs);
-
-        gl::GetShaderiv(fs, gl::COMPILE_STATUS, &mut compiled);
-        if compiled == 0 {
-            let mut log: [u8;1024] = [0; 1024];
-            let mut log_len = 0;
-            gl::GetShaderInfoLog(fs, 1024, &mut log_len, log.as_mut_ptr().cast());
-
-            let log = str::from_utf8_unchecked(slice::from_raw_parts(log.as_ptr(), log_len as usize));
-            println!("Compilation log:\n{}\n---", log);
-        }
-
-        let program = ShaderProgram { id: gl::CreateProgram(), inputs: Vec::new() };
-        gl::AttachShader(program.id, vs);
-        gl::AttachShader(program.id, fs);
-        gl::DeleteShader(vs);
-        gl::DeleteShader(fs);
-        gl::LinkProgram(program.id);
-        let mut linked: i32 = 0;
-        gl::GetProgramiv(program.id, gl::LINK_STATUS, &mut linked as *mut i32); 
-        if linked == 0 {
-            let mut log: [u8;1024] = [0; 1024];
-            let mut log_len: i32 = 0;
-            gl::GetProgramInfoLog(program.id, 1024, &mut log_len, log.as_mut_ptr().cast());
-
-            let log = str::from_utf8_unchecked(slice::from_raw_parts(log.as_ptr(), log_len as usize));
-            println!("Link log:\n{}\n---", log);
-        }
-
-        program
+        None
     }
 
     pub unsafe fn activate(&self) {

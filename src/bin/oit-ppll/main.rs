@@ -5,12 +5,14 @@ use std::{
     mem::size_of,
     f32::consts::PI,
     collections::VecDeque,
+    fs::File,
+    io::Read,
 };
 
 use gtk::{
     gdk,
     glib,
-    glib::{clone, source::Continue},
+    glib::clone,
     prelude::*,
 };
 
@@ -19,7 +21,11 @@ use nalgebra as na;
 use na::{
     RawStorage,
 };
+
 type Matrix4 = na::Matrix4::<f32>;
+type Vector4 = na::Vector4::<f32>;
+
+use gltf::Gltf;
 
 use gull::mesh::*;
 use gull::shader::*;
@@ -32,7 +38,7 @@ const APP_ID: &str = "vao-experiments.Gull";
 const UI: &str = r#"
 <interface>
     <object class='GtkApplicationWindow' id='main_window'>
-        <property name='title'>VAO Experiments</property>
+        <property name='title'>Per-pixel linked-list OIT</property>
         <child>
             <object class='GtkBox'>
                 <property name="orientation">GTK_ORIENTATION_VERTICAL</property>
@@ -89,7 +95,6 @@ struct AppData {
     frame_time_history: VecDeque::<f32>,
     fps_label: gtk::Label,
     objects: Vec::<ObjectData>,
-    object_xforms_buffer: u32,
     orig_view_point: (f32, f32, f32), // theta, phi, distance
     current_view_point: (f32, f32, f32), // theta, phi, distance
     view_matrices: [Matrix4; 2],
@@ -117,20 +122,6 @@ fn main() {
     app.run();
 }
 
-fn update_view_matrix(data: &mut AppData)
-{
-    let theta = data.current_view_point.0;
-    let phi = data.current_view_point.1;
-    let (stheta, ctheta) = theta.sin_cos();
-    let (sphi, cphi) = phi.sin_cos();
-    let p = data.current_view_point.2 * Point3::new(stheta * cphi, stheta * sphi, ctheta);
-    data.view_matrices[0] = Matrix4::look_at_rh(&p, &Point3::origin(), &Vector3::z_axis());
-
-    unsafe {
-        gl::NamedBufferSubData(data.view_data_buffer, 0, size_of::<Matrix4>() as isize, data.view_matrices[0].data.ptr().cast());
-    }
-}
-
 fn build_ui(app: &gtk::Application) {
     let builder = gtk::Builder::from_string(UI);
     let gl_canvas: gtk::GLArea = builder.object("canvas").unwrap();
@@ -146,7 +137,7 @@ fn build_ui(app: &gtk::Application) {
         move |canvas| {
             // When using EGL (default on Linux)
             let context = gdk::Display::default().and_then(|display| { display.create_gl_context().ok() })?;
-            //GLX crashees when the context is surfaceless (as of gtk 4.9.2). Use this instead
+            //GLX crashes when the context is surfaceless (as of gtk 4.9.2). Use this instead
             //let context = canvas.native()?.surface().create_gl_context().ok()?;
 
             context.set_required_version(4, 6);
@@ -215,7 +206,7 @@ fn build_ui(app: &gtk::Application) {
     scroll_ctrl.connect_scroll(clone!(@strong data, @strong gl_canvas =>
         move |_canvas, _, dy| {
             let mut data = data.borrow_mut();
-            data.current_view_point.2 += 0.6 * (dy as f32);
+            data.current_view_point.2 *= 0.1 * (dy as f32 + 1.0) + 0.9;
 
             update_view_matrix(&mut data);
 
@@ -228,108 +219,46 @@ fn build_ui(app: &gtk::Application) {
     window.present();
 }
 
-const VERTEX_SHADER: &str = r#"
-    #version 450
+fn update_view_matrix(data: &mut AppData)
+{
+    let theta = data.current_view_point.0;
+    let phi = data.current_view_point.1;
+    let (stheta, ctheta) = theta.sin_cos();
+    let (sphi, cphi) = phi.sin_cos();
+    let p = data.current_view_point.2 * Point3::new(stheta * cphi, stheta * sphi, ctheta);
+    data.view_matrices[0] = Matrix4::look_at_rh(&p, &Point3::origin(), &Vector3::z_axis());
 
-    layout(location = 0) in vec4 position;
-    layout(location = 1) in vec3 normal;
-
-    layout(std140)
-    uniform ViewMatrices {
-        mat4 viewMat;
-        mat4 projMat;
-    };
-
-    layout(std140)
-    uniform ObjectMatrix {
-        mat4 modelMat;
-    };
-
-    out VertexData
-    {
-        vec3 worldPosition;
-        vec3 worldNormal;
-    };
-
-    void main() {
-        worldPosition = (modelMat * position).xyz;
-        worldNormal = inverse(transpose(mat3(modelMat))) * normal;
-
-        gl_Position = projMat * viewMat * vec4(worldPosition, 1.0);
-    }
-"#;
-
-const FRAGMENT_SHADER: &str = r#"
-    #version 450
-
-    in VertexData
-    {
-        vec3 worldPosition;
-        vec3 worldNormal;
-    };
-
-    layout(location = 0) out vec4 color;
-
-    const vec3 LIGHT = vec3(0.0, 0.0, 10.0);
-
-    void main() {
-        vec3 l = normalize(LIGHT - worldPosition);
-        float lambert = clamp(dot(l, normalize(worldNormal)), 0.0, 1.0);
-        color = vec4(vec3(lambert), 1.0);
-    }
-"#;
-
-fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexShaderInput>, grid_dim: (u32, u32, u32)) {
     unsafe {
-        let num_objects = (grid_dim.0 * grid_dim.1 * grid_dim.2) as usize;
-        let per_object_size = ((size_of::<Matrix4>() as i32 / data.uniform_buffer_alignment) + 1) * data.uniform_buffer_alignment; 
-        if num_objects > data.objects.len() {
-            let mut buffer = data.object_xforms_buffer;
-            if gl::IsBuffer(buffer) == gl::TRUE {
-               gl::DeleteBuffers(1, &buffer as *const _);
-            }
-            gl::CreateBuffers(1, &mut buffer as *mut _);
-            // Note: this might cause significant over-allocation (e.g. on an RTX 3080, alignment is 256)
-            gl::NamedBufferStorage(buffer, (num_objects as i32 * per_object_size) as isize, std::ptr::null(), gl::DYNAMIC_STORAGE_BIT);
-            data.object_xforms_buffer = buffer;
-        }
-
-        const GRID_SPACING : f32 = 2.0;
-        let back = -((grid_dim.0 - 1) as f32 * GRID_SPACING / 2.0);
-        let left = -((grid_dim.1 - 1) as f32 * GRID_SPACING / 2.0);
-        let bottom = -((grid_dim.2 - 1) as f32 * GRID_SPACING / 2.0);
-        for i in 0..grid_dim.2 {
-            for j in 0..grid_dim.1 {
-                for k in 0..grid_dim.0 {
-                    let linear_idx = (i * (grid_dim.0 * grid_dim.1) + j * grid_dim.0 + k) as usize;
-                    if linear_idx >= data.objects.len() {
-                        let stream_layouts = vec![
-                            VertexLayout {
-                                attributes: vec![
-                                    Attribute {semantic: AttributeSemantic::Position, base_type: AttributeType::Float32, len: 3, normalized: false },
-                                    Attribute {semantic: AttributeSemantic::Normal, base_type: AttributeType::Float32, len: 3, normalized: false },
-                                ]
-                            },
-                        ];
-                        let draw_data = DrawData::with_mesh(stream_layouts, mesh);
-                        let inputs = InputAssembly::new();
-                        inputs.configure_and_bind(vs_inputs, &draw_data);
-
-                        let t = Vector3::new(back, left, bottom) + GRID_SPACING * Vector3::new(k as f32, j as f32, i as f32);
-                        let mat = Matrix4::new_translation(&t);
-
-                        let offset = (linear_idx as i32 * per_object_size) as isize;
-                        gl::NamedBufferSubData(data.object_xforms_buffer, offset, size_of::<Matrix4>() as isize, mat.data.ptr().cast());
-                        let xform_buffer = BufferView {
-                            buffer_id: data.object_xforms_buffer,
-                            offset: offset as u32
-                        };
-                        data.objects.push(ObjectData { draw_data, xform: mat, xform_buffer, inputs });
-                    }
-                }
-            }
-        }
+        gl::NamedBufferSubData(data.view_data_buffer, 0, size_of::<Matrix4>() as isize, data.view_matrices[0].data.ptr().cast());
     }
+}
+
+fn create_object(mesh: &Mesh, vs_inputs: &Vec::<VertexShaderInput>) -> ObjectData {
+    let stream_layouts = vec![
+        VertexLayout {
+            attributes: vec![
+                Attribute {semantic: AttributeSemantic::Position, base_type: AttributeType::Float32, len: 3, normalized: false },
+                Attribute {semantic: AttributeSemantic::Normal, base_type: AttributeType::Float32, len: 3, normalized: false },
+            ]
+        },
+    ];
+    let draw_data = DrawData::with_mesh(stream_layouts, mesh);
+    let inputs = InputAssembly::new();
+    inputs.configure_and_bind(vs_inputs, &draw_data);
+
+    #[allow(dead_code)]
+    struct ObjectUniformData {
+        mat: Matrix4,
+        color: Vector4,
+    }
+    let object_data = ObjectUniformData { mat: Matrix4::from_axis_angle(&Vector3::x_axis(), PI / 2.0), color: Vector4::new(1.0, 0.0, 0.0, 0.5) };
+    let mut buffer_id = 0;
+    unsafe {
+        gl::CreateBuffers(1, &mut buffer_id);
+        gl::NamedBufferStorage(buffer_id, size_of::<ObjectUniformData>() as isize, (&object_data as *const ObjectUniformData).cast(), 0);
+    }
+    let xform_buffer = BufferView { buffer_id, offset: 0 };
+    ObjectData { draw_data, xform: object_data.mat, xform_buffer, inputs }
 }
 
 fn initialize(data: &mut AppData) {
@@ -345,32 +274,36 @@ fn initialize(data: &mut AppData) {
         data.color = [0.85, 0.85, 0.85, 1.0];
         gl::ClearColor(data.color[0], data.color[1], data.color[2], data.color[3]);
         gl::ClearDepthf(1.0);
-        gl::Enable(gl::CULL_FACE);
-        gl::Enable(gl::DEPTH_TEST);
-        gl::DepthFunc(gl::LESS);
+        gl::Disable(gl::CULL_FACE);
+        gl::Disable(gl::DEPTH_TEST);
+        gl::Enable(gl::BLEND);
+        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 
-        let sphere = Mesh::new_icosphere(0.8, 5);
+        data.program = ShaderProgram::from_files("src/bin/oit-ppll/basic.vs.glsl", "src/bin/oit-ppll/basic.fs.glsl").unwrap();
 
-        data.program = ShaderProgram::new(VERTEX_SHADER, FRAGMENT_SHADER).unwrap();
+        let gltf_doc = Gltf::open("glTF/Duck.gltf").expect("Could not load gltf file");
+        let mut gltf_data = Vec::new();
+        File::open("glTF/Duck0.bin").expect("Could not load gltf bin file").read_to_end(&mut gltf_data).expect("read error"); 
+        if let Some(objects) = Mesh::from_gltf(&gltf_doc, &gltf_data, "LOD3spShape") {
+            for object in &objects {
+                println!("adding object: {} vert.", object.positions.len());
+                data.objects.push(create_object(object, &data.program.get_vertex_shader_inputs()));
+            }
+        }
 
-        let vs_inputs = data.program.get_vertex_shader_inputs();
+ //       let vs_inputs = data.program.get_vertex_shader_inputs();
     
-        let grid_size = (8, 7, 3);
-        update_object_grid(data, &sphere, &vs_inputs, grid_size);
-
         gl::CreateBuffers(1, &mut data.view_data_buffer as *mut _);
-        data.current_view_point = (PI/2.0, 0.0, 4.0 * grid_size.0.max(grid_size.1).max(grid_size.2) as f32);
+        let scene_size = 50.0;
+        data.current_view_point = (PI/2.0, 0.0, 4.0 * scene_size);
         data.view_matrices[0] = Matrix4::look_at_rh(&Point3::new(data.current_view_point.2, 0.0, 0.0), &Point3::origin(), &Vector3::z_axis());
         data.view_matrices[1] = Matrix4::new_perspective(1.0, 45.0_f32.to_radians(), 0.1, 1e3);
         gl::NamedBufferStorage(data.view_data_buffer, 2 * size_of::<Matrix4>() as isize, data.view_matrices.as_ptr().cast(), gl::DYNAMIC_STORAGE_BIT);
 
         let index = gl::GetUniformBlockIndex(data.program.id, "ViewMatrices\0".as_ptr().cast());
-        println!("Bindex block index {} to binding 0", index);
         gl::UniformBlockBinding(data.program.id, index, 0);
         let index = gl::GetUniformBlockIndex(data.program.id, "ObjectMatrix\0".as_ptr().cast());
-        println!("Bindex block index {} to binding 1", index);
         gl::UniformBlockBinding(data.program.id, index, 1);
-
     }
 }
 
@@ -382,6 +315,9 @@ fn render(data_rc: Rc::<RefCell::<AppData>>) {
 
         gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
       
+        // gtk seems to interact with this setting
+        gl::Disable(gl::DEPTH_TEST);
+
         data.program.activate();
 
         gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, data.view_data_buffer);
