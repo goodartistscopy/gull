@@ -97,7 +97,6 @@ struct AppData {
     uniform_buffer_alignment: i32,
     //global_input_assembly: InputAssembly,
     framebuffer: u32,
-    clear_framebuffer: u32,
     program: [ShaderProgram; 3],
     list_heads_tex: u32,
     next_fragment_counter: u32,
@@ -349,7 +348,7 @@ fn resize(data_rc: Rc::<RefCell::<AppData>>, width: i32, height: i32) {
         gl::NamedFramebufferParameteri(data.framebuffer, gl::FRAMEBUFFER_DEFAULT_HEIGHT, height);
 
         if gl::CheckNamedFramebufferStatus(data.framebuffer, gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
-            panic!("Framebuffer error");
+            println!("Framebuffer error");
         }
 
         // Allocate the image containing the head pointers of the list. Format is R32UI
@@ -383,19 +382,6 @@ fn resize(data_rc: Rc::<RefCell::<AppData>>, width: i32, height: i32) {
         gl::NamedBufferSubData(data.fragment_store, 0, 4, (&capacity as *const u32).cast());
 
         gl::BindBufferBase(gl::SHADER_STORAGE_BUFFER, 0, data.fragment_store);
-
-        if cfg!(not(feature = "fast_u32_clear")) {
-            if gl::IsFramebuffer(data.clear_framebuffer) == 0 {
-                gl::CreateFramebuffers(1, &mut data.clear_framebuffer);
-            }
-
-            gl::NamedFramebufferTexture(data.clear_framebuffer, gl::COLOR_ATTACHMENT0, data.list_heads_tex, 0);
-            gl::NamedFramebufferDrawBuffers(data.clear_framebuffer, 1, (&[gl::COLOR_ATTACHMENT0] as *const u32).cast());
-
-            if gl::CheckNamedFramebufferStatus(data.clear_framebuffer, gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
-                panic!("Framebuffer error");
-            }
-        }
     }
 }
 
@@ -405,7 +391,6 @@ fn render(data_rc: Rc::<RefCell::<AppData>>) {
 
         gl::BeginQuery(gl::TIME_ELAPSED, data.timer_query);
 
-        gl::ClearColor(data.color[0], data.color[1], data.color[2], data.color[3]);
         gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
       
         // gtk seems to interact with this setting
@@ -414,16 +399,8 @@ fn render(data_rc: Rc::<RefCell::<AppData>>) {
         gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, data.view_data_buffer);
 
         if data.render_oit {
-            // empty all pixel lists
-            if cfg!(feature = "fast_u32_clear") {
-                gl::ClearTexImage(data.list_heads_tex, 0, gl::RED_INTEGER, gl::UNSIGNED_INT, (&(0_u32) as *const u32).cast());
-            } else {
-                //data.program[3].activate;
-                gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, data.clear_framebuffer);
-                gl::ClearColor(0.0, 0.0, 0.0, 0.0);
-                gl::Clear(gl::COLOR_BUFFER_BIT);
-            }
-
+            // clear all lists
+            gl::ClearTexImage(data.list_heads_tex, 0, gl::RED_INTEGER, gl::UNSIGNED_INT, (&(0_u32) as *const u32).cast());
             // initialize allocator head to 1 so that 0 can represent an empty list
             gl::NamedBufferSubData(data.next_fragment_counter, 0, size_of::<u32>() as isize, (&1_i32 as *const i32).cast());
             gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, data.framebuffer);
