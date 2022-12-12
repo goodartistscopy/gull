@@ -19,12 +19,12 @@ const int MAX_NUM_LAYERS = 5;
 
 void insertSorted(inout Fragment array[MAX_NUM_LAYERS], in Fragment frag) {
     int i = 0;
-    while (i < array.length && array[i].depth < frag.depth) {
+    while (i < array.length() && array[i].depth < frag.depth) {
         i++;
     }
 
-    if (i < array.length) {
-        for (int j = array.length - 1; j > i; j--) {
+    if (i < array.length()) {
+        for (int j = array.length() - 1; j > i; j--) {
             array[j] = array[j - 1];
         }
 
@@ -36,7 +36,7 @@ void insertSorted(inout Fragment array[MAX_NUM_LAYERS], in Fragment frag) {
 vec4 composite_back_to_front(in Fragment array[MAX_NUM_LAYERS]) {
     vec4 composite = vec4(0.0);
 
-    for (int i = array.length - 1; i >= 0; i--) {
+    for (int i = array.length() - 1; i >= 0; i--) {
         if (array[i].next == 0) {
             continue;
         }
@@ -51,7 +51,7 @@ vec4 composite_back_to_front(in Fragment array[MAX_NUM_LAYERS]) {
 vec4 composite_front_to_back(in Fragment array[MAX_NUM_LAYERS]) {
     vec4 composite = vec4(0.0);
 
-    for (int i = 0; i < array.length; i++) {
+    for (int i = 0; i < array.length(); i++) {
         if (array[i].next == 0) {
             break;
         }
