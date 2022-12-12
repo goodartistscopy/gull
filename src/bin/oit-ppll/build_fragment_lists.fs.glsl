@@ -40,9 +40,9 @@ void main() {
     if (newFragmentAddr < maxNumFragments) {
 #if 0
         // /!\ incorrect critical section
-        uint headAddr = imageLoad(listHeads, coord);
+        uint headAddr = imageLoad(listHeads, coord).x;
         fragments[newFragmentAddr]= Fragment(fragColor, gl_FragCoord.z, headAddr);
-        imageStore(listHeads, coord, newFragmentAddr);
+        imageStore(listHeads, coord, uvec4(newFragmentAddr));
 #else
         uint headAddr = imageAtomicExchange(listHeads, coord, newFragmentAddr);
         fragments[newFragmentAddr] = Fragment(fragColor, gl_FragCoord.z, headAddr);
