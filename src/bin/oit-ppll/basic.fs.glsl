@@ -6,8 +6,8 @@ in VertexData
     vec3 worldNormal;
 };
 
-layout(std140)
-uniform ObjectMatrix {
+layout(std140, binding=1)
+uniform ObjectData {
     mat4 modelMat;
     vec4 color;
 } object;

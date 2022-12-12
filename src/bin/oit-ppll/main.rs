@@ -55,7 +55,7 @@ const UI: &str = r#"
                                 <property name='auto-render'>TRUE</property>
                                 <property name='has-depth-buffer'>TRUE</property>
                             </object>
-                        </child>child
+                        </child>
                         <child type='overlay'>
                             <object class='GtkLabel' id='fps_label'>
                                 <property name='halign'>GTK_ALIGN_START</property>
@@ -67,6 +67,11 @@ const UI: &str = r#"
                                 </attributes>
                             </object>
                         </child>
+                    </object>
+                </child>
+                <child>
+                    <object class='GtkToggleButton' id='oit_button'>
+                        <property name='label'>Use OIT</property>
                     </object>
                 </child>
             </object>
@@ -87,9 +92,15 @@ struct ObjectData {
 #[derive(Default)]
 struct AppData {
     context: Option<gdk::GLContext>,
+    gl_canvas: gtk::GLArea,
+    render_oit: bool,
     uniform_buffer_alignment: i32,
     //global_input_assembly: InputAssembly,
-    program: ShaderProgram,
+    framebuffer: u32,
+    program: [ShaderProgram; 3],
+    list_heads_tex: u32,
+    next_fragment_counter: u32,
+    fragment_store: u32,
     color: [f32; 4],
     timer_query: u32,
     frame_time_history: VecDeque::<f32>,
@@ -126,12 +137,14 @@ fn build_ui(app: &gtk::Application) {
     let builder = gtk::Builder::from_string(UI);
     let gl_canvas: gtk::GLArea = builder.object("canvas").unwrap();
     let fps_label: gtk::Label = builder.object("fps_label").unwrap();
+    let oit_button: gtk::ToggleButton = builder.object("oit_button").unwrap();
     let window: gtk::ApplicationWindow = builder.object("main_window").unwrap();
     window.set_application(Some(app));
 
     let data = Rc::new(RefCell::new(AppData::default()));
 
     data.borrow_mut().fps_label = fps_label;
+    data.borrow_mut().gl_canvas = gl_canvas.clone();
 
     gl_canvas.connect_create_context(clone!(@strong data =>
         move |canvas| {
@@ -180,6 +193,11 @@ fn build_ui(app: &gtk::Application) {
             gtk::Inhibit(true)
     }));
 
+    gl_canvas.connect_resize(clone!(@strong data =>
+        move |_canvas, width, height| {
+            resize(data.clone(), width, height);
+    }));
+
     let mouse_ctrl = gtk::GestureDrag::new();
     mouse_ctrl.connect_drag_begin(clone!(@strong data =>
         move |_canvas, _x, _y| {
@@ -215,6 +233,13 @@ fn build_ui(app: &gtk::Application) {
             gtk::Inhibit(true)
     }));
     gl_canvas.add_controller(&scroll_ctrl);
+
+    oit_button.connect_toggled(clone!(@strong data, @strong gl_canvas =>
+        move |button| {
+            data.borrow_mut().render_oit = button.is_active();
+
+            gl_canvas.queue_render();
+    }));
 
     window.present();
 }
@@ -279,7 +304,12 @@ fn initialize(data: &mut AppData) {
         gl::Enable(gl::BLEND);
         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 
-        data.program = ShaderProgram::from_files("src/bin/oit-ppll/basic.vs.glsl", "src/bin/oit-ppll/basic.fs.glsl").unwrap();
+        // standard rendering, no handling of transparency
+        data.program[0] = ShaderProgram::from_files("src/bin/oit-ppll/basic.vs.glsl", "src/bin/oit-ppll/basic.fs.glsl").unwrap();
+        // OIT rendering, construction of the link lists
+        data.program[1] = ShaderProgram::from_files("src/bin/oit-ppll/basic.vs.glsl", "src/bin/oit-ppll/build_fragment_lists.fs.glsl").unwrap();
+        // OIT rendering, fragment sort and compositing
+        data.program[2] = ShaderProgram::from_files("src/bin/oit-ppll/fullscreen.vs.glsl", "src/bin/oit-ppll/composite_fragments.fs.glsl").unwrap();
 
         let gltf_doc = Gltf::open("glTF/Duck.gltf").expect("Could not load gltf file");
         let mut gltf_data = Vec::new();
@@ -287,12 +317,10 @@ fn initialize(data: &mut AppData) {
         if let Some(objects) = Mesh::from_gltf(&gltf_doc, &gltf_data, "LOD3spShape") {
             for object in &objects {
                 println!("adding object: {} vert.", object.positions.len());
-                data.objects.push(create_object(object, &data.program.get_vertex_shader_inputs()));
+                data.objects.push(create_object(object, &data.program[0].get_vertex_shader_inputs()));
             }
         }
 
- //       let vs_inputs = data.program.get_vertex_shader_inputs();
-    
         gl::CreateBuffers(1, &mut data.view_data_buffer as *mut _);
         let scene_size = 50.0;
         data.current_view_point = (PI/2.0, 0.0, 4.0 * scene_size);
@@ -300,10 +328,60 @@ fn initialize(data: &mut AppData) {
         data.view_matrices[1] = Matrix4::new_perspective(1.0, 45.0_f32.to_radians(), 0.1, 1e3);
         gl::NamedBufferStorage(data.view_data_buffer, 2 * size_of::<Matrix4>() as isize, data.view_matrices.as_ptr().cast(), gl::DYNAMIC_STORAGE_BIT);
 
-        let index = gl::GetUniformBlockIndex(data.program.id, "ViewMatrices\0".as_ptr().cast());
-        gl::UniformBlockBinding(data.program.id, index, 0);
-        let index = gl::GetUniformBlockIndex(data.program.id, "ObjectMatrix\0".as_ptr().cast());
-        gl::UniformBlockBinding(data.program.id, index, 1);
+        // Atomic counter for fragment allocation
+        gl::CreateBuffers(1, &mut data.next_fragment_counter);
+        gl::NamedBufferStorage(data.next_fragment_counter, 4, std::ptr::null(), gl::DYNAMIC_STORAGE_BIT);
+        gl::BindBufferBase(gl::ATOMIC_COUNTER_BUFFER, 0, data.next_fragment_counter);
+    }
+}
+
+fn resize(data_rc: Rc::<RefCell::<AppData>>, width: i32, height: i32) {
+    unsafe {
+        let mut data = data_rc.borrow_mut();
+        
+        if gl::IsFramebuffer(data.framebuffer) == 0 {
+            gl::CreateFramebuffers(1, &mut data.framebuffer);
+        }
+
+        // The list creation pass does not output any fragments, this is empty framebuffer
+        gl::NamedFramebufferParameteri(data.framebuffer, gl::FRAMEBUFFER_DEFAULT_WIDTH, width);
+        gl::NamedFramebufferParameteri(data.framebuffer, gl::FRAMEBUFFER_DEFAULT_HEIGHT, height);
+
+        if gl::CheckNamedFramebufferStatus(data.framebuffer, gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
+            println!("Framebuffer error");
+        }
+
+        // Allocate the image containing the head pointers of the list. Format is R32UI
+        if gl::IsTexture(data.list_heads_tex) != 0 {
+            gl::DeleteTextures(1, &data.list_heads_tex);
+        }
+        gl::CreateTextures(gl::TEXTURE_2D, 1, &mut data.list_heads_tex);
+        gl::TextureStorage2D(data.list_heads_tex, 1, gl::R32UI, width, height);
+        gl::ClearTexImage(data.list_heads_tex, 0, gl::RED_INTEGER, gl::UNSIGNED_INT, (&(0_u32) as *const u32).cast());
+
+        gl::ProgramUniform1i(data.program[1].id, 0 /* hard-coded location*/, 0);
+        gl::ProgramUniform1i(data.program[2].id, 0 /* hard-coded location*/, 0);
+        gl::BindImageTexture(0, data.list_heads_tex, 0, gl::FALSE, 0, gl::READ_WRITE, gl::R32UI);
+
+        // Allocate the fragment store
+        if gl::IsBuffer(data.fragment_store) != 0 {
+            gl::DeleteBuffers(1, &data.fragment_store);
+        }
+        gl::CreateBuffers(1, &mut data.fragment_store);
+
+        #[allow(dead_code)]
+        struct Fragment {
+            color: [f32;4],
+            depth: f32,
+            next: u32,
+        }
+        let capacity = (width * height * 5) as u32;
+        let size = size_of::<u32>() + capacity as usize * size_of::<Fragment>();
+        gl::NamedBufferStorage(data.fragment_store, size as isize, std::ptr::null(), gl::DYNAMIC_STORAGE_BIT);
+        // copy the capacity
+        gl::NamedBufferSubData(data.fragment_store, 0, 4, (&capacity as *const u32).cast());
+
+        gl::BindBufferBase(gl::SHADER_STORAGE_BUFFER, 0, data.fragment_store);
     }
 }
 
@@ -318,14 +396,32 @@ fn render(data_rc: Rc::<RefCell::<AppData>>) {
         // gtk seems to interact with this setting
         gl::Disable(gl::DEPTH_TEST);
 
-        data.program.activate();
-
         gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, data.view_data_buffer);
+
+        if data.render_oit {
+            // clear all lists
+            gl::ClearTexImage(data.list_heads_tex, 0, gl::RED_INTEGER, gl::UNSIGNED_INT, (&(0_u32) as *const u32).cast());
+            // initialize allocator head to 1 so that 0 can represent an empty list
+            gl::NamedBufferSubData(data.next_fragment_counter, 0, size_of::<u32>() as isize, (&1_i32 as *const i32).cast());
+            gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, data.framebuffer);
+            data.program[1].activate();
+        } else {
+            data.program[0].activate();
+        }
 
         for object in &data.objects {
             object.inputs.activate();
             gl::BindBufferRange(gl::UNIFORM_BUFFER, 1, object.xform_buffer.buffer_id, object.xform_buffer.offset as isize, size_of::<[Matrix4; 2]>() as isize);
             gl::DrawElements(gl::TRIANGLES, object.draw_data.num_elems, gl::UNSIGNED_INT, std::ptr::null());
+        }
+
+        // fullscreen pass to resolve the lists and composite fragments
+        if data.render_oit {
+            // make sure the previous writes are visible
+            gl::MemoryBarrier(gl::SHADER_IMAGE_ACCESS_BARRIER_BIT | gl::SHADER_STORAGE_BARRIER_BIT);
+            data.gl_canvas.attach_buffers();
+            data.program[2].activate();
+            gl::DrawArrays(gl::TRIANGLES, 0, 3);
         }
 
         gl::EndQuery(gl::TIME_ELAPSED);

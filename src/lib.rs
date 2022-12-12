@@ -39,9 +39,9 @@ pub mod utils {
             _ => tag.normal()
         };
 
-        if severity == gl::DEBUG_SEVERITY_NOTIFICATION {
-            return;
-        }
+        // if severity == gl::DEBUG_SEVERITY_NOTIFICATION {
+        //     return;
+        // }
 
         let message = unsafe {
             String::from_utf8_unchecked(std::slice::from_raw_parts(message as *const u8, length as usize).to_owned())
