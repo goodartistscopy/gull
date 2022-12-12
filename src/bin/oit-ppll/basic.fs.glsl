@@ -14,10 +14,9 @@ uniform ObjectData {
 
 layout(location = 0) out vec4 color;
 
-const vec3 LIGHT = vec3(0.0, 0.0, 1.0);
+const vec3 g_LightDirection = vec3(0.0, 0.0, 1.0);
 
 void main() {
-    vec3 l = LIGHT; //normalize(LIGHT - worldPosition);
-    float lambert = clamp(dot(l, normalize(worldNormal)), 0.0, 1.0);
+    float lambert = clamp(dot(g_LightDirection, normalize(worldNormal)), 0.0, 1.0);
     color = vec4(lambert * object.color.rgb, object.color.a);
 }

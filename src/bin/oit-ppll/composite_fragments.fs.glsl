@@ -1,6 +1,6 @@
 #version 450
 
-layout(r32ui, location=0, binding=0) uniform uimage2D list_heads;
+layout(r32ui, location=0, binding=0) uniform uimage2D listHeads;
 
 struct Fragment {
     vec4 color;
@@ -9,7 +9,7 @@ struct Fragment {
 };
 
 layout(std430, binding = 0) readonly buffer FragmentStore {
-    uint max_num_fragments;
+    uint maxNumFragments;
     Fragment fragments[];
 };
 
@@ -33,7 +33,7 @@ void insertSorted(inout Fragment array[MAX_NUM_LAYERS], in Fragment frag) {
     }
 }
 
-vec4 composite_back_to_front(in Fragment array[MAX_NUM_LAYERS]) {
+vec4 compositeBackToFront(in Fragment array[MAX_NUM_LAYERS]) {
     vec4 composite = vec4(0.0);
 
     for (int i = array.length() - 1; i >= 0; i--) {
@@ -48,7 +48,7 @@ vec4 composite_back_to_front(in Fragment array[MAX_NUM_LAYERS]) {
     return composite;
 }
 
-vec4 composite_front_to_back(in Fragment array[MAX_NUM_LAYERS]) {
+vec4 compositeFrontToBack(in Fragment array[MAX_NUM_LAYERS]) {
     vec4 composite = vec4(0.0);
 
     for (int i = 0; i < array.length(); i++) {
@@ -63,30 +63,30 @@ vec4 composite_front_to_back(in Fragment array[MAX_NUM_LAYERS]) {
     return composite;
 }
 
-Fragment sorted_fragments[MAX_NUM_LAYERS];
+Fragment sortedFragments[MAX_NUM_LAYERS];
 
 void main() {
     ivec2 coord = ivec2(gl_FragCoord.xy);
 
-    uint head = imageLoad(list_heads, coord).x;
+    uint head = imageLoad(listHeads, coord).x;
     if (head == 0) {
         discard;
     }
 
     for (int i = 0; i < MAX_NUM_LAYERS; ++i) {
-        sorted_fragments[i].color = vec4(0.0);
-        sorted_fragments[i].depth = 1.0;
-        sorted_fragments[i].next = 0; // used as marker here
+        sortedFragments[i].color = vec4(0.0);
+        sortedFragments[i].depth = 1.0;
+        sortedFragments[i].next = 0; // used as marker here
     }
 
     uint itemAddr = head;
     while (itemAddr != 0) {
         Fragment frag = fragments[itemAddr];
-        insertSorted(sorted_fragments, frag);
+        insertSorted(sortedFragments, frag);
         itemAddr = frag.next;
     }
 
-    color = composite_back_to_front(sorted_fragments);
-//    color = composite_front_to_back(sorted_fragments);
+    color = compositeBackToFront(sortedFragments);
+//    color = compositeFrontToBack(sortedFragments);
 }
 
