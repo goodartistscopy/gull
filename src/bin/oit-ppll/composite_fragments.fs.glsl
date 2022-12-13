@@ -1,6 +1,6 @@
 #version 450
 
-layout(r32ui, location=0, binding=0) uniform uimage2D listHeads;
+layout(r32ui) uniform uimage2D listHeads;
 
 struct Fragment {
     vec4 color;

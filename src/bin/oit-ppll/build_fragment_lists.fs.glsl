@@ -12,7 +12,7 @@ uniform ObjectData {
     vec4 color;
 } object;
 
-layout(r32ui, location = 0, binding = 0) uniform uimage2D listHeads;
+layout(r32ui, location = 7, binding = 0) uniform uimage2D listHeads;
 
 layout(binding = 0) uniform atomic_uint nextFragmentAddr;
 

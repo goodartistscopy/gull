@@ -343,7 +343,7 @@ fn resize(data_rc: Rc::<RefCell::<AppData>>, width: i32, height: i32) {
             gl::CreateFramebuffers(1, &mut data.framebuffer);
         }
 
-        // The list creation pass does not output any fragments, this is empty framebuffer
+        // The fragment list creation pass does not output any fragments, this is empty framebuffer
         gl::NamedFramebufferParameteri(data.framebuffer, gl::FRAMEBUFFER_DEFAULT_WIDTH, width);
         gl::NamedFramebufferParameteri(data.framebuffer, gl::FRAMEBUFFER_DEFAULT_HEIGHT, height);
 
@@ -351,17 +351,22 @@ fn resize(data_rc: Rc::<RefCell::<AppData>>, width: i32, height: i32) {
             println!("Framebuffer error");
         }
 
-        // Allocate the image containing the head pointers of the list. Format is R32UI
+        // Allocate the texture containing the head pointers of the list. Format is R32UI
         if gl::IsTexture(data.list_heads_tex) != 0 {
             gl::DeleteTextures(1, &data.list_heads_tex);
         }
         gl::CreateTextures(gl::TEXTURE_2D, 1, &mut data.list_heads_tex);
         gl::TextureStorage2D(data.list_heads_tex, 1, gl::R32UI, width, height);
-        gl::ClearTexImage(data.list_heads_tex, 0, gl::RED_INTEGER, gl::UNSIGNED_INT, (&(0_u32) as *const u32).cast());
 
-        gl::ProgramUniform1i(data.program[1].id, 0 /* hard-coded location*/, 0);
-        gl::ProgramUniform1i(data.program[2].id, 0 /* hard-coded location*/, 0);
-        gl::BindImageTexture(0, data.list_heads_tex, 0, gl::FALSE, 0, gl::READ_WRITE, gl::R32UI);
+        // Bind the texture as an image to the uniform in the shaders
+        let binding_point = 0;
+        // case 1: location is hard coded in the shader. Note that because the GLSL declaration
+        // provides both location and binding point, this call is actually redundant !
+        gl::ProgramUniform1i(data.program[1].id, 7, binding_point);
+        // case 2: query the location then bind.
+        let loc = gl::GetProgramResourceLocation(data.program[2].id, gl::UNIFORM, "listHeads\0".as_ptr() as *const i8);
+        gl::ProgramUniform1i(data.program[2].id, loc, binding_point);
+        gl::BindImageTexture(binding_point as u32, data.list_heads_tex, 0, gl::FALSE, 0, gl::READ_WRITE, gl::R32UI);
 
         // Allocate the fragment store
         if gl::IsBuffer(data.fragment_store) != 0 {
