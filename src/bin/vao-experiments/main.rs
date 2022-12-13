@@ -10,7 +10,7 @@ use std::{
 use gtk::{
     gdk,
     glib,
-    glib::{clone, source::Continue},
+    glib::clone,
     prelude::*,
 };
 
@@ -215,7 +215,7 @@ fn build_ui(app: &gtk::Application) {
     scroll_ctrl.connect_scroll(clone!(@strong data, @strong gl_canvas =>
         move |_canvas, _, dy| {
             let mut data = data.borrow_mut();
-            data.current_view_point.2 += 0.6 * (dy as f32);
+            data.current_view_point.2 *= 0.1 * (dy as f32 + 1.0) + 0.9;
 
             update_view_matrix(&mut data);
 
@@ -282,7 +282,7 @@ const FRAGMENT_SHADER: &str = r#"
 fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexShaderInput>, grid_dim: (u32, u32, u32)) {
     unsafe {
         let num_objects = (grid_dim.0 * grid_dim.1 * grid_dim.2) as usize;
-        let per_object_size = ((size_of::<Matrix4>() as i32 / data.uniform_buffer_alignment) + 1) * data.uniform_buffer_alignment; 
+        let per_object_data_size = ((size_of::<Matrix4>() as i32 / data.uniform_buffer_alignment) + 1) * data.uniform_buffer_alignment; 
         if num_objects > data.objects.len() {
             let mut buffer = data.object_xforms_buffer;
             if gl::IsBuffer(buffer) == gl::TRUE {
@@ -290,7 +290,7 @@ fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexS
             }
             gl::CreateBuffers(1, &mut buffer as *mut _);
             // Note: this might cause significant over-allocation (e.g. on an RTX 3080, alignment is 256)
-            gl::NamedBufferStorage(buffer, (num_objects as i32 * per_object_size) as isize, std::ptr::null(), gl::DYNAMIC_STORAGE_BIT);
+            gl::NamedBufferStorage(buffer, (num_objects as i32 * per_object_data_size) as isize, std::ptr::null(), gl::DYNAMIC_STORAGE_BIT);
             data.object_xforms_buffer = buffer;
         }
 
@@ -318,7 +318,7 @@ fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexS
                         let t = Vector3::new(back, left, bottom) + GRID_SPACING * Vector3::new(k as f32, j as f32, i as f32);
                         let mat = Matrix4::new_translation(&t);
 
-                        let offset = (linear_idx as i32 * per_object_size) as isize;
+                        let offset = (linear_idx as i32 * per_object_data_size) as isize;
                         gl::NamedBufferSubData(data.object_xforms_buffer, offset, size_of::<Matrix4>() as isize, mat.data.ptr().cast());
                         let xform_buffer = BufferView {
                             buffer_id: data.object_xforms_buffer,
@@ -362,13 +362,11 @@ fn initialize(data: &mut AppData) {
         data.current_view_point = (PI/2.0, 0.0, 4.0 * grid_size.0.max(grid_size.1).max(grid_size.2) as f32);
         data.view_matrices[0] = Matrix4::look_at_rh(&Point3::new(data.current_view_point.2, 0.0, 0.0), &Point3::origin(), &Vector3::z_axis());
         data.view_matrices[1] = Matrix4::new_perspective(1.0, 45.0_f32.to_radians(), 0.1, 1e3);
-        gl::NamedBufferStorage(data.view_data_buffer, 2 * size_of::<Matrix4>() as isize, data.view_matrices.as_ptr().cast(), gl::DYNAMIC_STORAGE_BIT);
+        gl::NamedBufferStorage(data.view_data_buffer, size_of::<[Matrix4;2]>() as isize, data.view_matrices.as_ptr().cast(), gl::DYNAMIC_STORAGE_BIT);
 
         let index = gl::GetUniformBlockIndex(data.program.id, "ViewMatrices\0".as_ptr().cast());
-        println!("Bindex block index {} to binding 0", index);
         gl::UniformBlockBinding(data.program.id, index, 0);
         let index = gl::GetUniformBlockIndex(data.program.id, "ObjectMatrix\0".as_ptr().cast());
-        println!("Bindex block index {} to binding 1", index);
         gl::UniformBlockBinding(data.program.id, index, 1);
 
     }
@@ -388,7 +386,7 @@ fn render(data_rc: Rc::<RefCell::<AppData>>) {
 
         for object in &data.objects {
             object.inputs.activate();
-            gl::BindBufferRange(gl::UNIFORM_BUFFER, 1, object.xform_buffer.buffer_id, object.xform_buffer.offset as isize, size_of::<[Matrix4; 2]>() as isize);
+            gl::BindBufferRange(gl::UNIFORM_BUFFER, 1, object.xform_buffer.buffer_id, object.xform_buffer.offset as isize, size_of::<Matrix4>() as isize);
             gl::DrawElements(gl::TRIANGLES, object.draw_data.num_elems, gl::UNSIGNED_INT, std::ptr::null());
         }
 
