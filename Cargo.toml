@@ -13,4 +13,5 @@ libloading="0.7.4"
 nalgebra = "0.31.2"
 nalgebra-glm = "0.17.0"
 colored = "2.0.0"
+memoffset = "0.8"
 gltf = { version = "1.0.0", features = ["names"] }

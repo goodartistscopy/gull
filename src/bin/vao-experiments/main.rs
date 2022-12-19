@@ -22,9 +22,12 @@ use na::{
 type Matrix4 = na::Matrix4::<f32>;
 
 use gull::mesh::*;
+use gull::mesh::vertex_buffer::*;
+use gull::mesh::geometries;
 use gull::shader::*;
 use gull::vertex_layout::*;
 
+#[cfg(debug_assertions)]
 use gull::utils::*;
 
 const APP_ID: &str = "vao-experiments.Gull";
@@ -303,15 +306,7 @@ fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexS
                 for k in 0..grid_dim.0 {
                     let linear_idx = (i * (grid_dim.0 * grid_dim.1) + j * grid_dim.0 + k) as usize;
                     if linear_idx >= data.objects.len() {
-                        let stream_layouts = vec![
-                            VertexLayout {
-                                attributes: vec![
-                                    Attribute {semantic: AttributeSemantic::Position, base_type: AttributeType::Float32, len: 3, normalized: false },
-                                    Attribute {semantic: AttributeSemantic::Normal, base_type: AttributeType::Float32, len: 3, normalized: false },
-                                ]
-                            },
-                        ];
-                        let draw_data = DrawData::with_mesh(stream_layouts, mesh);
+                        let draw_data = DrawData::with_mesh(mesh);
                         let inputs = InputAssembly::new();
                         inputs.configure_and_bind(vs_inputs, &draw_data);
 
@@ -349,7 +344,7 @@ fn initialize(data: &mut AppData) {
         gl::Enable(gl::DEPTH_TEST);
         gl::DepthFunc(gl::LESS);
 
-        let sphere = Mesh::new_icosphere(0.8, 5);
+        let sphere = geometries::icosphere_fine(0.8, 5);
 
         data.program = ShaderProgram::new(VERTEX_SHADER, FRAGMENT_SHADER).unwrap();
 
@@ -387,7 +382,7 @@ fn render(data_rc: Rc::<RefCell::<AppData>>) {
         for object in &data.objects {
             object.inputs.activate();
             gl::BindBufferRange(gl::UNIFORM_BUFFER, 1, object.xform_buffer.buffer_id, object.xform_buffer.offset as isize, size_of::<Matrix4>() as isize);
-            gl::DrawElements(gl::TRIANGLES, object.draw_data.num_elems, gl::UNSIGNED_INT, std::ptr::null());
+            gl::DrawElements(gl::TRIANGLES, object.draw_data.num_indices as i32, gl::UNSIGNED_INT, std::ptr::null());
         }
 
         gl::EndQuery(gl::TIME_ELAPSED);

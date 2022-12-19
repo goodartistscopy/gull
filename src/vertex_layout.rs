@@ -7,77 +7,21 @@ use nalgebra::RawStorage;
 use crate::mesh::*;
 use crate::shader::VertexShaderInput;
 
-#[derive(Copy,Clone,PartialEq,Debug)]
-pub enum AttributeSemantic {
-    Position,
-    Normal,
-    Tangent,
-    Bitangent,
-    Color(u8),
-    TexCoord(u8),
-    Generic(u8),
-    Padding
-}
+pub use crate::mesh::attribute::*;
+use crate::mesh::vertex_buffer::*;
 
-#[derive(Copy,Clone,Debug)]
-pub enum AttributeType {
-    Float16,
-    Float32,
-    Float64,
-    Int8,
-    UInt8,
-    Int16,
-    UInt16,
-    /* Padcked formats
-     UInt32_A2B10G10R10,
-    UInt32_A2B10G10R10,
-    UInt32_R10FG11FR11F,*/
-}
-
-impl AttributeType {
-    fn size(&self) -> u32 {
-        match self {
-            AttributeType::Int8 | AttributeType::UInt8 => 1,
-            AttributeType::Int16 | AttributeType::UInt16 => 2,
-            AttributeType::Float16 => 2,
-            AttributeType::Float32 => 4,
-            AttributeType::Float64 => 8,
-        }
-    }
-}
-
-impl Into<GLenum> for AttributeType {
+impl Into<GLenum> for BaseType {
     fn into(self) -> GLenum {
         match self {
-            AttributeType::Float16=> gl::HALF_FLOAT,
-            AttributeType::Float32 => gl::FLOAT,
-            AttributeType::Float64 => gl::DOUBLE,
-            AttributeType::Int8 => gl::BYTE,
-            AttributeType::UInt8 => gl::UNSIGNED_BYTE,
-            AttributeType::Int16 => gl::SHORT,
-            AttributeType::UInt16 => gl::UNSIGNED_SHORT,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Attribute {
-    pub semantic: AttributeSemantic,
-    pub base_type: AttributeType,
-    pub len: u8,
-    pub normalized: bool
-}
-
-impl Attribute {
-    fn to_gl_type(&self) -> GLenum {
-        self.base_type.into()
-    }
-
-    // size in bytes
-    fn size(&self) -> u32 {
-        match self.semantic {
-            AttributeSemantic::Padding => self.len.into(),
-            _ => self.base_type.size() * self.len as u32
+            BaseType::HalfFloat=> gl::HALF_FLOAT,
+            BaseType::Float => gl::FLOAT,
+            BaseType::Double => gl::DOUBLE,
+            BaseType::Byte => gl::BYTE,
+            BaseType::UnsignedByte => gl::UNSIGNED_BYTE,
+            BaseType::Short => gl::SHORT,
+            BaseType::UnsignedShort => gl::UNSIGNED_SHORT,
+            BaseType::Int => gl::INT,
+            BaseType::UnsignedInt => gl::UNSIGNED_INT,
         }
     }
 }
@@ -88,144 +32,129 @@ pub struct BufferView {
     pub offset: u32
 }
 
-#[derive(Clone, Debug)]
-pub struct VertexLayout {
-    pub attributes: Vec<Attribute>
+pub struct GPUVertexBuffer {
+    pub buffer_view: BufferView,
+    pub layout: VertexLayout
 }
 
-impl VertexLayout {
-    pub fn size(&self) -> u32 {
-        let mut size = 0;
-        for attribute in &self.attributes {
-            size += attribute.size();
-        }
-        size
-    }
-
-    fn contains(&self, any_semantics: &[AttributeSemantic]) -> bool {
-        for attribute in &self.attributes {
-            if any_semantics.contains(&attribute.semantic) {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn offset(&self, semantic: AttributeSemantic) -> Option<u32> {
-        let mut offset = 0;
-        for attribute in &self.attributes {
-            if attribute.semantic == semantic {
-                return Some(offset)
-            }
-            offset += attribute.size();
-        }
-        None
-    }
-
-    pub fn attribute<'a>(&'a self, semantic: AttributeSemantic) -> Option<(u32, &'a Attribute)> {
-        let mut offset = 0;
-        for attribute in &self.attributes {
-            if attribute.semantic == semantic {
-                return Some((offset, attribute));
-            }
-            offset += attribute.size();
-        }
-        None
-    }
+pub struct GPUIndexBuffer {
+    pub buffer_view: BufferView,
+    pub layout: IndexLayout
 }
 
 pub struct DrawData {
-    pub vertex_buffers: Vec<BufferView>,
-    pub layouts: Vec<VertexLayout>, // FIXME not the right place or just reference ?
-    pub index_buffer: Option<BufferView>,
-    pub num_vertices: i32,
-    pub num_elems: i32,
+    pub vertex_buffers: Vec<GPUVertexBuffer>,
+    pub index_buffer: Option<GPUIndexBuffer>,
+    pub num_vertices: u32,
+    pub num_indices: u32,
 }
 
-pub fn allocate_vertex_buffers(stream_layouts: &Vec<VertexLayout>, num_vertices: u32) -> Vec<BufferView> {
-    let mut buffers = Vec::<BufferView>::with_capacity(stream_layouts.len());
-    for layout in stream_layouts {
-        let mut buffer = BufferView { buffer_id: 0, offset: 0 };
+impl DrawData { 
+    pub fn new(vertex_layouts: &Vec<VertexLayout>, num_vertices: u32, index_layout: Option<IndexLayout>, num_indices: u32) -> DrawData {
+        let mut vertex_buffers = Vec::with_capacity(vertex_layouts.len());
+        for layout in vertex_layouts {
+            let mut buffer = BufferView { buffer_id: 0, offset: 0 };
+            unsafe {
+                gl::CreateBuffers(1, &mut buffer.buffer_id);
+                gl::NamedBufferStorage(buffer.buffer_id, (layout.size() as u32 * num_vertices) as isize, std::ptr::null(), gl::MAP_WRITE_BIT);
+            }
+            vertex_buffers.push(GPUVertexBuffer { buffer_view: buffer, layout: layout.clone() });
+        }
+
+        let mut index_buffer = None;
+        if let Some(layout) = index_layout {
+            let mut buffer = BufferView { buffer_id: 0, offset: 0 };
+            unsafe {
+                gl::CreateBuffers(1, &mut buffer.buffer_id);
+                gl::NamedBufferStorage(buffer.buffer_id, (layout.base_type.size() * num_indices) as isize , std::ptr::null(), gl::MAP_WRITE_BIT | gl::DYNAMIC_STORAGE_BIT);
+            }
+            index_buffer = Some(GPUIndexBuffer { buffer_view: buffer, layout: layout.clone() });
+        }
+
+        DrawData { vertex_buffers, index_buffer, num_vertices, num_indices }
+    }
+
+    pub fn with_mesh(mesh: &Mesh) -> Self {
+        let draw_data = DrawData::new(
+            &mesh.vertex_buffers().iter().map(|buffer| buffer.layout().clone()).collect(),
+            mesh.num_vertices(),
+            mesh.index_buffer().and_then(|buffer| Some(IndexLayout { base_type: buffer.base_type(), primitive_type: PrimitiveType::Triangles })),
+            mesh.num_indices()
+        );
+
         unsafe {
-            gl::CreateBuffers(1, &mut buffer.buffer_id);
-            gl::NamedBufferStorage(buffer.buffer_id, (layout.size() * num_vertices) as isize, std::ptr::null(), gl::MAP_WRITE_BIT);
-            // #[cfg(debug_assertions)]
-            // gl::ObjectLabel(gl::BUFFER, buffer.buffer_id, 8, "VBuffer".as_ptr() as *const i8);
-        }
-        buffers.push(buffer);
-    }
-
-    buffers
-}
-
-pub fn allocate_index_buffer(num_triangles: u32) -> BufferView {
-    let mut buffer = BufferView { buffer_id: 0, offset: 0 };
-    unsafe {
-        gl::CreateBuffers(1, &mut buffer.buffer_id);
-        let size = (num_triangles * std::mem::size_of::<[u32; 3]>() as u32) as isize;
-        gl::NamedBufferStorage(buffer.buffer_id, size, std::ptr::null(), gl::MAP_WRITE_BIT | gl::DYNAMIC_STORAGE_BIT);
-    }
-    buffer
-}
-
-pub fn fill_with_mesh_data(draw_data: &mut DrawData, mesh: &Mesh) {
-    unsafe {
-        for (layout, buffer) in draw_data.layouts.iter().zip(draw_data.vertex_buffers.iter()) {
-            let stride = layout.size() as usize;
-            let position_offset = layout.offset(AttributeSemantic::Position);
-            let normal_offset = layout.offset(AttributeSemantic::Normal);
-            
-            let buffer_addr = if position_offset.is_some() || normal_offset.is_some() {
-                gl::MapNamedBufferRange(buffer.buffer_id, buffer.offset as isize, (layout.size() * mesh.num_vertices()) as isize, gl::MAP_WRITE_BIT)
-            } else {
-                std::ptr::null()
-            };
-            
-            if let Some(rel_offset) = position_offset {
-                let mut dst = buffer_addr.add(rel_offset as usize);
-                for pos in &mesh.positions {
-                    // TODO type conversion !
-                    let src = pos.coords.data.get_address_unchecked_linear(0);
-                    src.copy_to_nonoverlapping(dst as *mut f32, 3);
-                    dst = dst.add(stride);
-                }
+            for (gpu_buffer, cpu_buffer) in draw_data.vertex_buffers.iter().zip(mesh.vertex_buffers().iter()) {
+                let size = (gpu_buffer.layout.size() as u32 * mesh.num_vertices()) as isize;
+                let dst = gl::MapNamedBufferRange(gpu_buffer.buffer_view.buffer_id, gpu_buffer.buffer_view.offset as isize, size, gl::MAP_WRITE_BIT);
+                let src = cpu_buffer.ptr();
+                src.copy_to_nonoverlapping(dst.cast(), size as usize);
+                gl::UnmapNamedBuffer(gpu_buffer.buffer_view.buffer_id);
             }
 
-            if let Some(rel_offset) = normal_offset {
-                let mut dst = buffer_addr.add(rel_offset as usize);
-                for normal in &mesh.normals {
-                    // TODO type conversion !
-                    let src = normal.data.get_address_unchecked_linear(0);
-                    src.copy_to_nonoverlapping(dst as *mut f32, 3);
-                    dst = dst.add(stride);
-                }
-            }
-
-            if buffer_addr != std::ptr::null() {
-                gl::UnmapNamedBuffer(buffer.buffer_id);
+            if let Some(gpu_buffer) = &draw_data.index_buffer {
+                let indices = mesh.index_buffer().unwrap();
+                let size = (gpu_buffer.layout.base_type.size() as u32 * mesh.num_indices()) as isize;
+                let dst = gl::MapNamedBufferRange(gpu_buffer.buffer_view.buffer_id, gpu_buffer.buffer_view.offset as isize, size, gl::MAP_WRITE_BIT);
+                let src = indices.ptr();
+                src.copy_to_nonoverlapping(dst.cast(), size as usize);
+                gl::UnmapNamedBuffer(gpu_buffer.buffer_view.buffer_id);
             }
         }
-        
-        draw_data.num_vertices = mesh.num_vertices() as i32;
-
-        if let Some(index_buffer) = &draw_data.index_buffer {
-            let offset = index_buffer.offset as isize;
-            let size = (mesh.num_triangles() * std::mem::size_of::<[u32; 3]>() as u32) as isize;
-            let src = mesh.indices.as_ptr() as *const GLvoid;
-            gl::NamedBufferSubData(index_buffer.buffer_id, offset, size, src);
-
-            draw_data.num_elems = 3 * mesh.num_triangles() as i32;
-        }
-    }
-}
-
-impl DrawData {
-    pub fn with_mesh(stream_layouts: Vec<VertexLayout>, mesh: &Mesh) -> Self {
-        let vbuffers = allocate_vertex_buffers(&stream_layouts, mesh.num_vertices());
-        let ibuffer = allocate_index_buffer(mesh.num_triangles());
-        let mut draw_data = DrawData { vertex_buffers: vbuffers, layouts: stream_layouts, index_buffer: Some(ibuffer), num_vertices: 0, num_elems: 0 };
-        fill_with_mesh_data(&mut draw_data, mesh);
         draw_data
+    }
+
+    /// Fill the draw data buffers with corresponding data read from the mesh,
+    /// performing the necessary conversions.
+    pub fn fill_with_mesh(&mut self, mesh: &Mesh) {
+        unsafe {
+            for buffer in &self.vertex_buffers {
+                let stride = buffer.layout.size() as u32;
+                let position = buffer.layout.attribute(Semantic::Position);
+                let normal = buffer.layout.attribute(Semantic::Normal);
+                
+                let buffer_addr = if position.is_some() || normal.is_some() {
+                    gl::MapNamedBufferRange(buffer.buffer_view.buffer_id, buffer.buffer_view.offset as isize, (stride * mesh.num_vertices()) as isize, gl::MAP_WRITE_BIT)
+                } else {
+                    std::ptr::null()
+                };
+                
+                if let Some(position) = position {
+                    let mut dst = buffer_addr.add(position.offset as usize);
+                    for pos in mesh.positions().unwrap() {
+                        // TODO type conversion !
+                        let src = pos.coords.data.get_address_unchecked_linear(0);
+                        src.copy_to_nonoverlapping(dst as *mut f32, 3);
+                        dst = dst.add(stride as usize);
+                    }
+                }
+
+                if let Some(normal) = normal {
+                    let mut dst = buffer_addr.add(normal.offset as usize);
+                    for normal in mesh.normals().unwrap() {
+                        // TODO type conversion !
+                        let src = normal.data.get_address_unchecked_linear(0);
+                        src.copy_to_nonoverlapping(dst as *mut f32, 3);
+                        dst = dst.add(stride as usize);
+                    }
+                }
+
+                if buffer_addr != std::ptr::null() {
+                    gl::UnmapNamedBuffer(buffer.buffer_view.buffer_id);
+                }
+            }
+            
+            self.num_vertices = mesh.num_vertices();
+
+            if let Some(index_buffer) = &self.index_buffer {
+                let indices = mesh.index_buffer().unwrap();
+                let offset = index_buffer.buffer_view.offset as isize;
+                let size = indices.size() as isize;
+                let src =  indices.ptr() as *const GLvoid;
+                gl::NamedBufferSubData(index_buffer.buffer_view.buffer_id, offset, size, src);
+
+                self.num_indices = mesh.num_indices();
+            }
+        }
     }
 }
 
@@ -246,37 +175,34 @@ impl InputAssembly {
     pub fn configure_and_bind(&self, program_inputs: &Vec::<VertexShaderInput>, draw_data: &DrawData) {
         unsafe {
             let mut binding = 0;
-            for (buffer, layout) in draw_data.vertex_buffers.iter().zip(draw_data.layouts.iter()) {
-                let mut offset = 0;
-                for attribute in &layout.attributes {
+            for buffer in draw_data.vertex_buffers.iter() {
+                for attribute in buffer.layout.attributes() {
                     let matching_input = program_inputs.iter().find(|&input| input.semantic == attribute.semantic);
                     if let Some(input) = matching_input {
                         gl::EnableVertexArrayAttrib(self.vao, input.location);
                         gl::VertexArrayAttribBinding(self.vao, input.location, binding);
-                        gl::VertexArrayVertexBuffer(self.vao, binding, buffer.buffer_id, buffer.offset as isize, layout.size() as i32);
+                        gl::VertexArrayVertexBuffer(self.vao, binding, buffer.buffer_view.buffer_id, buffer.buffer_view.offset as isize, buffer.layout.size() as i32);
                         match input.base_type {
                             gl::FLOAT | gl::FLOAT_VEC2 | gl::FLOAT_VEC3 | gl::FLOAT_VEC4 => {
-                                gl::VertexArrayAttribFormat(self.vao, input.location, attribute.len as i32, attribute.to_gl_type(), attribute.normalized as GLboolean, offset);
+                                gl::VertexArrayAttribFormat(self.vao, input.location, attribute.dimension as i32, attribute.base_type.into(), attribute.normalized as GLboolean, attribute.offset as u32);
                             },
                             gl::INT | gl::INT_VEC2 | gl::INT_VEC3 | gl::INT_VEC4 |
                             gl::UNSIGNED_INT | gl::UNSIGNED_INT_VEC2 | gl::UNSIGNED_INT_VEC3 | gl::UNSIGNED_INT_VEC4 => {
-                                gl::VertexArrayAttribIFormat(self.vao, input.location, attribute.len as i32, attribute.to_gl_type(), offset);
+                                gl::VertexArrayAttribIFormat(self.vao, input.location, attribute.dimension as i32, attribute.base_type.into(), attribute.offset as u32);
                             },
                             gl::DOUBLE | gl::DOUBLE_VEC2 | gl::DOUBLE_VEC3 | gl::DOUBLE_VEC4 => {
-                                gl::VertexArrayAttribLFormat(self.vao, input.location, attribute.len as i32, attribute.to_gl_type(), offset);
+                                gl::VertexArrayAttribLFormat(self.vao, input.location, attribute.dimension as i32, attribute.base_type.into(), attribute.offset as u32);
                             }
                             _ => ()
                         }
 
                         binding += 1;
                     } 
-
-                    offset += attribute.size();
                 }
             }
 
             if let Some(ib) = &draw_data.index_buffer {
-                gl::VertexArrayElementBuffer(self.vao, ib.buffer_id);
+                gl::VertexArrayElementBuffer(self.vao, ib.buffer_view.buffer_id);
             }
         }
     }
@@ -284,13 +210,13 @@ impl InputAssembly {
     pub fn bind(&self, draw_data: &DrawData) {
         unsafe {
             let mut binding = 0;
-            for (buffer, layout) in draw_data.vertex_buffers.iter().zip(draw_data.layouts.iter()) {
-                gl::VertexArrayVertexBuffer(self.vao, binding, buffer.buffer_id, buffer.offset as isize, layout.size() as i32);
+            for buffer in draw_data.vertex_buffers.iter() {
+                gl::VertexArrayVertexBuffer(self.vao, binding, buffer.buffer_view.buffer_id, buffer.buffer_view.offset as isize, buffer.layout.size() as i32);
                 binding += 1;
             }
 
             if let Some(ib) = &draw_data.index_buffer {
-                gl::VertexArrayElementBuffer(self.vao, ib.buffer_id);
+                gl::VertexArrayElementBuffer(self.vao, ib.buffer_view.buffer_id);
             }}
     }
 

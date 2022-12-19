@@ -1,4 +1,5 @@
-use crate::vertex_layout::AttributeSemantic;
+use crate::vertex_layout::Semantic;
+
 use std::{
     slice,
     str,
@@ -7,7 +8,7 @@ use std::{
 
 pub struct VertexShaderInput
 {
-    pub semantic: AttributeSemantic,
+    pub semantic: Semantic,
     pub base_type: u32,
     pub location: u32
 }
@@ -91,20 +92,20 @@ impl ShaderProgram {
         gl::UseProgram(self.id);
     }
 
-    fn guess_semantic(variable_name: &str) -> Option<AttributeSemantic> {
+    fn guess_semantic(variable_name: &str) -> Option<Semantic> {
         if variable_name.starts_with("position") {
-            Some(AttributeSemantic::Position)
+            Some(Semantic::Position)
         } else if variable_name.starts_with("normal") {
-            Some(AttributeSemantic::Normal)
+            Some(Semantic::Normal)
         } else if variable_name.starts_with("tangent") {
-            Some(AttributeSemantic::Tangent)
+            Some(Semantic::Tangent)
         } else if variable_name.starts_with("bitangent") {
-            Some(AttributeSemantic::Bitangent)
+            Some(Semantic::Bitangent)
         } else if variable_name.starts_with("texcoords") {
             if variable_name.len() <= "texcoords".len() {
                 None
             } else if let Ok(n) = variable_name[9..10].parse::<u8>() {
-                Some(AttributeSemantic::TexCoord(n))
+                Some(Semantic::TexCoord(n))
             } else {
                 None
             }
@@ -112,7 +113,7 @@ impl ShaderProgram {
             if variable_name.len() <= "uv".len() {
                 None
             } else if let Ok(n) = variable_name[2..3].parse::<u8>() {
-                Some(AttributeSemantic::TexCoord(n))
+                Some(Semantic::TexCoord(n))
             } else {
                 None
             }
@@ -120,7 +121,7 @@ impl ShaderProgram {
             if variable_name.len() <= "color".len() {
                 None
             } else if let Ok(n) = variable_name[5..6].parse::<u8>() {
-                Some(AttributeSemantic::Color(n))
+                Some(Semantic::Color(n))
             } else {
                 None
             }
@@ -128,7 +129,7 @@ impl ShaderProgram {
             if variable_name.len() <= "generic".len() {
                 None
             } else if let Ok(n) = variable_name[7..8].parse::<u8>() {
-                Some(AttributeSemantic::Generic(n))
+                Some(Semantic::Generic(n))
             } else {
                 None
             }
