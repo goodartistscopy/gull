@@ -1,3 +1,4 @@
+/*
 use crate::vertex_layout::Semantic;
 
 use std::{
@@ -166,3 +167,4 @@ impl ShaderProgram {
         inputs
     }
 }
+*/

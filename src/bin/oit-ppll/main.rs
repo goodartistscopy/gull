@@ -7,6 +7,7 @@ use std::{
     collections::VecDeque,
     fs::File,
     io::Read,
+    slice,
 };
 
 use gtk::{
@@ -18,9 +19,7 @@ use gtk::{
 
 use nalgebra as na;
 
-use na::{
-    RawStorage,
-};
+use na::RawStorage;
 
 type Matrix4 = na::Matrix4::<f32>;
 type Vector4 = na::Vector4::<f32>;
@@ -30,7 +29,7 @@ use gltf::Gltf;
 use gull::mesh::*;
 use gull::shader::*;
 use gull::vertex_layout::*;
-
+use gull::buffer::*;
 use gull::utils::*;
 
 const APP_ID: &str = "vao-experiments.Gull";
@@ -84,7 +83,7 @@ struct ObjectData {
     draw_data: DrawData,
     #[allow(dead_code)] // read via pointer
     xform: Matrix4,
-    xform_buffer: BufferView,
+    xform_buffer: Buffer,
     inputs: InputAssembly
 }
 
@@ -259,15 +258,13 @@ fn update_view_matrix(data: &mut AppData)
 }
 
 fn create_object(mesh: &Mesh, vs_inputs: &Vec::<VertexShaderInput>) -> ObjectData {
-    let stream_layouts = vec![
-        VertexLayout {
-            attributes: vec![
-                Attribute {semantic: AttributeSemantic::Position, base_type: AttributeType::Float32, len: 3, normalized: false },
-                Attribute {semantic: AttributeSemantic::Normal, base_type: AttributeType::Float32, len: 3, normalized: false },
-            ]
-        },
-    ];
-    let draw_data = DrawData::with_mesh(stream_layouts, mesh);
+    // let stream_layouts = vec![
+    //     vertex_buffer::VertexLayout(vec![
+    //             Attribute {semantic: Semantic::Position, dimension: 3, base_type: BaseType::Float, normalized: false, offset: 0 },
+    //             Attribute {semantic: Semantic::Normal, dimension: 3, base_type: BaseType::Float, normalized: false, offset: 12 },
+    //     ]),
+    // ];
+    let draw_data = DrawData::with_mesh(mesh);
     let inputs = InputAssembly::new();
     inputs.configure_and_bind(vs_inputs, &draw_data);
 
@@ -277,12 +274,14 @@ fn create_object(mesh: &Mesh, vs_inputs: &Vec::<VertexShaderInput>) -> ObjectDat
         color: Vector4,
     }
     let object_data = ObjectUniformData { mat: Matrix4::from_axis_angle(&Vector3::x_axis(), PI / 2.0), color: Vector4::new(1.0, 0.0, 0.0, 0.5) };
-    let mut buffer_id = 0;
-    unsafe {
-        gl::CreateBuffers(1, &mut buffer_id);
-        gl::NamedBufferStorage(buffer_id, size_of::<ObjectUniformData>() as isize, (&object_data as *const ObjectUniformData).cast(), 0);
-    }
-    let xform_buffer = BufferView { buffer_id, offset: 0 };
+    let data = unsafe { slice::from_raw_parts(&object_data as *const ObjectUniformData as *const u8, size_of::<ObjectUniformData>()) };
+    let xform_buffer = Buffer::with_data(data);
+    // let mut buffer_id = 0;
+    // unsafe {
+    //     gl::CreateBuffers(1, &mut buffer_id);
+    //     gl::NamedBufferStorage(buffer_id, size_of::<ObjectUniformData>() as isize, (&object_data as *const ObjectUniformData).cast(), 0);
+    // }
+    // let xform_buffer = BufferView { buffer_id, offset: 0 };
     ObjectData { draw_data, xform: object_data.mat, xform_buffer, inputs }
 }
 
@@ -416,8 +415,8 @@ fn render(data_rc: Rc::<RefCell::<AppData>>) {
 
         for object in &data.objects {
             object.inputs.activate();
-            gl::BindBufferRange(gl::UNIFORM_BUFFER, 1, object.xform_buffer.buffer_id, object.xform_buffer.offset as isize, size_of::<[Matrix4; 2]>() as isize);
-            gl::DrawElements(gl::TRIANGLES, object.draw_data.num_elems, gl::UNSIGNED_INT, std::ptr::null());
+            gl::BindBufferRange(gl::UNIFORM_BUFFER, 1, object.xform_buffer.id(), object.xform_buffer.offset(), size_of::<[Matrix4; 2]>() as isize);
+            gl::DrawElements(gl::TRIANGLES, object.draw_data.num_indices as i32, gl::UNSIGNED_INT, std::ptr::null());
         }
 
         // fullscreen pass to resolve the lists and composite fragments

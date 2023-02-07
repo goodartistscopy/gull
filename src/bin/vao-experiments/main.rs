@@ -22,10 +22,10 @@ use na::{
 type Matrix4 = na::Matrix4::<f32>;
 
 use gull::mesh::*;
-use gull::mesh::vertex_buffer::*;
 use gull::mesh::geometries;
 use gull::shader::*;
 use gull::vertex_layout::*;
+use gull::buffer::Buffer;
 
 #[cfg(debug_assertions)]
 use gull::utils::*;
@@ -76,7 +76,7 @@ struct ObjectData {
     draw_data: DrawData,
     #[allow(dead_code)] // read via pointer
     xform: Matrix4,
-    xform_buffer: BufferView,
+    xform_buffer: Buffer,
     inputs: InputAssembly
 }
 
@@ -92,7 +92,7 @@ struct AppData {
     frame_time_history: VecDeque::<f32>,
     fps_label: gtk::Label,
     objects: Vec::<ObjectData>,
-    object_xforms_buffer: u32,
+    object_xforms_buffer: Buffer,
     orig_view_point: (f32, f32, f32), // theta, phi, distance
     current_view_point: (f32, f32, f32), // theta, phi, distance
     view_matrices: [Matrix4; 2],
@@ -287,14 +287,17 @@ fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexS
         let num_objects = (grid_dim.0 * grid_dim.1 * grid_dim.2) as usize;
         let per_object_data_size = ((size_of::<Matrix4>() as i32 / data.uniform_buffer_alignment) + 1) * data.uniform_buffer_alignment; 
         if num_objects > data.objects.len() {
-            let mut buffer = data.object_xforms_buffer;
-            if gl::IsBuffer(buffer) == gl::TRUE {
-               gl::DeleteBuffers(1, &buffer as *const _);
-            }
-            gl::CreateBuffers(1, &mut buffer as *mut _);
+            data.object_xforms_buffer = Buffer::new((num_objects * per_object_data_size as usize) as usize);
+ //           data.object_xforms_buffer.allocate((num_objects * per_object_data_size as usize) as isize);
+
+            // let mut buffer = data.object_xforms_buffer;
+            // if gl::IsBuffer(buffer) == gl::TRUE {
+            //    gl::DeleteBuffers(1, &buffer as *const _);
+            // }
+            // gl::CreateBuffers(1, &mut buffer as *mut _);
             // Note: this might cause significant over-allocation (e.g. on an RTX 3080, alignment is 256)
-            gl::NamedBufferStorage(buffer, (num_objects as i32 * per_object_data_size) as isize, std::ptr::null(), gl::DYNAMIC_STORAGE_BIT);
-            data.object_xforms_buffer = buffer;
+            // gl::NamedBufferStorage(buffer, (num_objects as i32 * per_object_data_size) as isize, std::ptr::null(), gl::DYNAMIC_STORAGE_BIT);
+            // data.object_xforms_buffer = buffer;
         }
 
         const GRID_SPACING : f32 = 2.0;
@@ -314,11 +317,12 @@ fn update_object_grid(data: &mut AppData, mesh: &Mesh, vs_inputs: &Vec::<VertexS
                         let mat = Matrix4::new_translation(&t);
 
                         let offset = (linear_idx as i32 * per_object_data_size) as isize;
-                        gl::NamedBufferSubData(data.object_xforms_buffer, offset, size_of::<Matrix4>() as isize, mat.data.ptr().cast());
-                        let xform_buffer = BufferView {
-                            buffer_id: data.object_xforms_buffer,
-                            offset: offset as u32
-                        };
+                        gl::NamedBufferSubData(data.object_xforms_buffer.id(), offset, size_of::<Matrix4>() as isize, mat.data.ptr().cast());
+                        let xform_buffer = data.object_xforms_buffer.view(offset);
+                        // let xform_buffer = BufferView {
+                        //     buffer_id: data.object_xforms_buffer,
+                        //     offset: offset as u32
+                        // };
                         data.objects.push(ObjectData { draw_data, xform: mat, xform_buffer, inputs });
                     }
                 }
@@ -381,7 +385,7 @@ fn render(data_rc: Rc::<RefCell::<AppData>>) {
 
         for object in &data.objects {
             object.inputs.activate();
-            gl::BindBufferRange(gl::UNIFORM_BUFFER, 1, object.xform_buffer.buffer_id, object.xform_buffer.offset as isize, size_of::<Matrix4>() as isize);
+            gl::BindBufferRange(gl::UNIFORM_BUFFER, 1, object.xform_buffer.id(), object.xform_buffer.offset(), size_of::<Matrix4>() as isize);
             gl::DrawElements(gl::TRIANGLES, object.draw_data.num_indices as i32, gl::UNSIGNED_INT, std::ptr::null());
         }
 

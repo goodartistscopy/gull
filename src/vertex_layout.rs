@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-
+/*
 use gl::types::*;
 
 use nalgebra::RawStorage;
@@ -9,6 +9,7 @@ use crate::shader::VertexShaderInput;
 
 pub use crate::mesh::attribute::*;
 use crate::mesh::vertex_buffer::*;
+use crate::buffer::Buffer;
 
 impl Into<GLenum> for BaseType {
     fn into(self) -> GLenum {
@@ -26,19 +27,13 @@ impl Into<GLenum> for BaseType {
     }
 }
 
-#[derive(Debug)]
-pub struct BufferView {
-    pub buffer_id : u32,
-    pub offset: u32
-}
-
 pub struct GPUVertexBuffer {
-    pub buffer_view: BufferView,
+    pub buffer_view: Buffer,
     pub layout: VertexLayout
 }
 
 pub struct GPUIndexBuffer {
-    pub buffer_view: BufferView,
+    pub buffer_view: Buffer,
     pub layout: IndexLayout
 }
 
@@ -53,21 +48,13 @@ impl DrawData {
     pub fn new(vertex_layouts: &Vec<VertexLayout>, num_vertices: u32, index_layout: Option<IndexLayout>, num_indices: u32) -> DrawData {
         let mut vertex_buffers = Vec::with_capacity(vertex_layouts.len());
         for layout in vertex_layouts {
-            let mut buffer = BufferView { buffer_id: 0, offset: 0 };
-            unsafe {
-                gl::CreateBuffers(1, &mut buffer.buffer_id);
-                gl::NamedBufferStorage(buffer.buffer_id, (layout.size() as u32 * num_vertices) as isize, std::ptr::null(), gl::MAP_WRITE_BIT);
-            }
+            let buffer = Buffer::new((layout.size() as u32 * num_vertices) as usize);
             vertex_buffers.push(GPUVertexBuffer { buffer_view: buffer, layout: layout.clone() });
         }
 
         let mut index_buffer = None;
         if let Some(layout) = index_layout {
-            let mut buffer = BufferView { buffer_id: 0, offset: 0 };
-            unsafe {
-                gl::CreateBuffers(1, &mut buffer.buffer_id);
-                gl::NamedBufferStorage(buffer.buffer_id, (layout.base_type.size() * num_indices) as isize , std::ptr::null(), gl::MAP_WRITE_BIT | gl::DYNAMIC_STORAGE_BIT);
-            }
+            let buffer = Buffer::new((layout.base_type.size() * num_indices) as usize);
             index_buffer = Some(GPUIndexBuffer { buffer_view: buffer, layout: layout.clone() });
         }
 
@@ -85,19 +72,19 @@ impl DrawData {
         unsafe {
             for (gpu_buffer, cpu_buffer) in draw_data.vertex_buffers.iter().zip(mesh.vertex_buffers().iter()) {
                 let size = (gpu_buffer.layout.size() as u32 * mesh.num_vertices()) as isize;
-                let dst = gl::MapNamedBufferRange(gpu_buffer.buffer_view.buffer_id, gpu_buffer.buffer_view.offset as isize, size, gl::MAP_WRITE_BIT);
+                let dst = gl::MapNamedBufferRange(gpu_buffer.buffer_view.id(), gpu_buffer.buffer_view.offset(), size, gl::MAP_WRITE_BIT);
                 let src = cpu_buffer.ptr();
                 src.copy_to_nonoverlapping(dst.cast(), size as usize);
-                gl::UnmapNamedBuffer(gpu_buffer.buffer_view.buffer_id);
+                gl::UnmapNamedBuffer(gpu_buffer.buffer_view.id());
             }
 
             if let Some(gpu_buffer) = &draw_data.index_buffer {
                 let indices = mesh.index_buffer().unwrap();
                 let size = (gpu_buffer.layout.base_type.size() as u32 * mesh.num_indices()) as isize;
-                let dst = gl::MapNamedBufferRange(gpu_buffer.buffer_view.buffer_id, gpu_buffer.buffer_view.offset as isize, size, gl::MAP_WRITE_BIT);
+                let dst = gl::MapNamedBufferRange(gpu_buffer.buffer_view.id(), gpu_buffer.buffer_view.offset(), size, gl::MAP_WRITE_BIT);
                 let src = indices.ptr();
                 src.copy_to_nonoverlapping(dst.cast(), size as usize);
-                gl::UnmapNamedBuffer(gpu_buffer.buffer_view.buffer_id);
+                gl::UnmapNamedBuffer(gpu_buffer.buffer_view.id());
             }
         }
         draw_data
@@ -113,7 +100,7 @@ impl DrawData {
                 let normal = buffer.layout.attribute(Semantic::Normal);
                 
                 let buffer_addr = if position.is_some() || normal.is_some() {
-                    gl::MapNamedBufferRange(buffer.buffer_view.buffer_id, buffer.buffer_view.offset as isize, (stride * mesh.num_vertices()) as isize, gl::MAP_WRITE_BIT)
+                    gl::MapNamedBufferRange(buffer.buffer_view.id(), buffer.buffer_view.offset(), (stride * mesh.num_vertices()) as isize, gl::MAP_WRITE_BIT)
                 } else {
                     std::ptr::null()
                 };
@@ -139,7 +126,7 @@ impl DrawData {
                 }
 
                 if buffer_addr != std::ptr::null() {
-                    gl::UnmapNamedBuffer(buffer.buffer_view.buffer_id);
+                    gl::UnmapNamedBuffer(buffer.buffer_view.id());
                 }
             }
             
@@ -147,10 +134,10 @@ impl DrawData {
 
             if let Some(index_buffer) = &self.index_buffer {
                 let indices = mesh.index_buffer().unwrap();
-                let offset = index_buffer.buffer_view.offset as isize;
+                let offset = index_buffer.buffer_view.offset();
                 let size = indices.size() as isize;
                 let src =  indices.ptr() as *const GLvoid;
-                gl::NamedBufferSubData(index_buffer.buffer_view.buffer_id, offset, size, src);
+                gl::NamedBufferSubData(index_buffer.buffer_view.id(), offset, size, src);
 
                 self.num_indices = mesh.num_indices();
             }
@@ -181,7 +168,7 @@ impl InputAssembly {
                     if let Some(input) = matching_input {
                         gl::EnableVertexArrayAttrib(self.vao, input.location);
                         gl::VertexArrayAttribBinding(self.vao, input.location, binding);
-                        gl::VertexArrayVertexBuffer(self.vao, binding, buffer.buffer_view.buffer_id, buffer.buffer_view.offset as isize, buffer.layout.size() as i32);
+                        gl::VertexArrayVertexBuffer(self.vao, binding, buffer.buffer_view.id(), buffer.buffer_view.offset(), buffer.layout.size() as i32);
                         match input.base_type {
                             gl::FLOAT | gl::FLOAT_VEC2 | gl::FLOAT_VEC3 | gl::FLOAT_VEC4 => {
                                 gl::VertexArrayAttribFormat(self.vao, input.location, attribute.dimension as i32, attribute.base_type.into(), attribute.normalized as GLboolean, attribute.offset as u32);
@@ -202,7 +189,7 @@ impl InputAssembly {
             }
 
             if let Some(ib) = &draw_data.index_buffer {
-                gl::VertexArrayElementBuffer(self.vao, ib.buffer_view.buffer_id);
+                gl::VertexArrayElementBuffer(self.vao, ib.buffer_view.id());
             }
         }
     }
@@ -211,12 +198,12 @@ impl InputAssembly {
         unsafe {
             let mut binding = 0;
             for buffer in draw_data.vertex_buffers.iter() {
-                gl::VertexArrayVertexBuffer(self.vao, binding, buffer.buffer_view.buffer_id, buffer.buffer_view.offset as isize, buffer.layout.size() as i32);
+                gl::VertexArrayVertexBuffer(self.vao, binding, buffer.buffer_view.id(), buffer.buffer_view.offset(), buffer.layout.size() as i32);
                 binding += 1;
             }
 
             if let Some(ib) = &draw_data.index_buffer {
-                gl::VertexArrayElementBuffer(self.vao, ib.buffer_view.buffer_id);
+                gl::VertexArrayElementBuffer(self.vao, ib.buffer_view.id());
             }}
     }
 
@@ -226,4 +213,4 @@ impl InputAssembly {
         }
     }
 }
-
+*/
